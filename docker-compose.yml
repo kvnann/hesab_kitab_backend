@@ -1,0 +1,39 @@
+# Production stack: API + Postgres. Configure via .env (see .env.example).
+# Deploy: docker compose up -d --build
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the compose network the database host is always the db service.
+      DB_HOST: db
+      DB_PORT: '5432'
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-hesab}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-hesab_kitab}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-hesab} -d ${DB_NAME:-hesab_kitab}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Postgres is intentionally NOT exposed to the host in production.
+    # Uncomment for direct access during debugging:
+    # ports:
+    #   - '5432:5432'
+
+volumes:
+  pgdata:
