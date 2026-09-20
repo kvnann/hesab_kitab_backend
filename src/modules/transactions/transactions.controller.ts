@@ -24,7 +24,7 @@ import {
   UpdateTransactionDto,
 } from './dto/transaction.dto';
 import { Transaction } from './entities/transaction.entity';
-import { MonthSummary, TransactionsService } from './transactions.service';
+import { CashSummary, MonthSummary, TransactionsService } from './transactions.service';
 
 @ApiTags('transactions')
 @ApiBearerAuth()
@@ -60,6 +60,12 @@ export class TransactionsController {
     @Query() dto: MonthSummaryDto,
   ): Promise<MonthSummary> {
     return this.transactionsService.monthSummary(user.id, dto);
+  }
+
+  @Get('cash')
+  @ApiOperation({ summary: 'All-time till balance (Kassa): income, expense and net' })
+  cashSummary(@CurrentUser() user: AuthenticatedUser): Promise<CashSummary> {
+    return this.transactionsService.cashSummary(user.id);
   }
 
   @Get(':id')

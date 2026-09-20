@@ -393,6 +393,43 @@ describe('Transactions (e2e)', () => {
     expect(settled.body.name).toBe('Reversible');
   });
 
+  it('reports the all-time till balance regardless of date', async () => {
+    const fresh = await registerUser(app);
+    const contact = await createContact(app, fresh, 'Kassa');
+
+    // Three different months: the till spans all of them.
+    await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({ type: 'income', amount: 5000, date: '2025-11-03', contactId: contact.id })
+      .expect(201);
+    await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({ type: 'expense', amount: 1200, date: '2026-01-19', contactId: contact.id })
+      .expect(201);
+    const removable = await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({ type: 'income', amount: 300, date: '2026-07-27', contactId: contact.id })
+      .expect(201);
+
+    const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body).toMatchObject({ income: 5300, expense: 1200, net: 4100 });
+
+    // It moves with the transactions, not with the calendar.
+    await authed(app, fresh)
+      .delete(`/api/v1/transactions/${removable.body.id}`)
+      .expect(204);
+    const afterDelete = await authed(app, fresh)
+      .get('/api/v1/transactions/cash')
+      .expect(200);
+    expect(afterDelete.body.net).toBe(3800);
+  });
+
+  it('starts the till at zero for a new user', async () => {
+    const fresh = await registerUser(app);
+    const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body).toMatchObject({ income: 0, expense: 0, net: 0 });
+  });
+
   it('has the b-tree index on (user_id, date)', async () => {
     const dataSource = app.get(DataSource);
     const rows = await dataSource.query<{ indexdef: string }[]>(

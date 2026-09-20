@@ -25,6 +25,14 @@ export interface DaySummary {
   count: number;
 }
 
+/** All-time cash position: what the till holds right now. */
+export interface CashSummary {
+  income: number;
+  expense: number;
+  /** income − expense over all time, in the user's primary currency. */
+  net: number;
+}
+
 export interface MonthSummary {
   year: number;
   month: number;
@@ -191,6 +199,44 @@ export class TransactionsService {
       net: money(income - expense),
       days,
     };
+  }
+
+  /**
+   * Running total of every transaction ever recorded ("Kassa"). Unlike the
+   * month summary this has no date bounds: it is the till balance, so it only
+   * moves when a transaction is added, edited or deleted.
+   */
+  async cashSummary(userId: string): Promise<CashSummary> {
+    const settings = await this.dataSource
+      .getRepository(Settings)
+      .findOneByOrFail({ userId });
+
+    const primaryAmount = `
+      CASE WHEN transaction.currency = :primaryCurrency
+           THEN transaction.amount
+           ELSE ROUND(transaction.amount / :exchangeRate, 2)
+      END`;
+
+    const raw = await this.transactionsRepository
+      .createQueryBuilder('transaction')
+      .select(
+        `COALESCE(SUM(${primaryAmount}) FILTER (WHERE transaction.type = 'income'), 0)`,
+        'income',
+      )
+      .addSelect(
+        `COALESCE(SUM(${primaryAmount}) FILTER (WHERE transaction.type = 'expense'), 0)`,
+        'expense',
+      )
+      .where('transaction.user_id = :userId', { userId })
+      .setParameters({
+        primaryCurrency: settings.primaryCurrency,
+        exchangeRate: settings.exchangeRate,
+      })
+      .getRawOne<{ income: string; expense: string }>();
+
+    const income = money(raw?.income ?? 0);
+    const expense = money(raw?.expense ?? 0);
+    return { income, expense, net: money(income - expense) };
   }
 
   async findOne(userId: string, id: string): Promise<Transaction> {
