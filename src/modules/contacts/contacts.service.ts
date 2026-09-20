@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { OwingDirection } from '../../common/enums';
 import { money } from '../../common/utils/decimal.util';
+import { Transaction } from '../transactions/entities/transaction.entity';
+import { Wagon } from '../wagons/entities/wagon.entity';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 import { Contact } from './entities/contact.entity';
 
@@ -18,6 +20,7 @@ export interface ContactsSummary {
 @Injectable()
 export class ContactsService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(Contact)
     private readonly contactsRepository: Repository<Contact>,
   ) {}
@@ -91,8 +94,26 @@ export class ContactsService {
     return trimmed;
   }
 
+  /**
+   * Deleting a contact takes their transactions with it — the app warns the
+   * user of exactly that. Wagons survive: their contact columns are
+   * ON DELETE SET NULL, so a wagon side simply loses its counterparty name.
+   * The applied amounts stay on the wagon but are never reversed again,
+   * because the balance they belonged to no longer exists.
+   */
   async remove(userId: string, id: string): Promise<void> {
-    const result = await this.contactsRepository.delete({ id, userId });
-    if (!result.affected) throw new NotFoundException('Contact not found');
+    await this.dataSource.transaction(async (manager) => {
+      const exists = await manager.getRepository(Contact).existsBy({ id, userId });
+      if (!exists) throw new NotFoundException('Contact not found');
+
+      await manager.getRepository(Transaction).delete({ userId, contactId: id });
+      // Clear the applied amounts on the sides about to be unlinked, so a later
+      // wagon edit cannot try to reverse a delta against a deleted contact.
+      const wagons = manager.getRepository(Wagon);
+      await wagons.update({ userId, boughtFromContactId: id }, { buyAppliedAmount: null });
+      await wagons.update({ userId, soldToContactId: id }, { sellAppliedAmount: null });
+
+      await manager.getRepository(Contact).delete({ id, userId });
+    });
   }
 }

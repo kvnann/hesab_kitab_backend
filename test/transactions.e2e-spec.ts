@@ -308,21 +308,89 @@ describe('Transactions (e2e)', () => {
     expect(day24).toMatchObject({ income: 1000, expense: 450, net: 550, count: 2 });
   });
 
-  it('keeps history when a linked contact is deleted', async () => {
+  it("deletes a contact's transactions along with the contact", async () => {
     const user = await registerUser(app);
     const contact = await createContact(app, user, 'Ephemeral');
+    const other = await createContact(app, user, 'Survivor');
+
     const tx = await authed(app, user)
       .post('/api/v1/transactions')
       .send({ type: 'income', amount: 100, date: '2026-07-10', contactId: contact.id })
       .expect(201);
+    const unrelated = await authed(app, user)
+      .post('/api/v1/transactions')
+      .send({ type: 'income', amount: 70, date: '2026-07-10', contactId: other.id })
+      .expect(201);
 
     await authed(app, user).delete(`/api/v1/contacts/${contact.id}`).expect(204);
 
-    const kept = await authed(app, user)
-      .get(`/api/v1/transactions/${tx.body.id}`)
+    await authed(app, user).get(`/api/v1/transactions/${tx.body.id}`).expect(404);
+    // Only that contact's history goes; everything else is untouched.
+    await authed(app, user).get(`/api/v1/transactions/${unrelated.body.id}`).expect(200);
+
+    const day = await authed(app, user)
+      .get('/api/v1/transactions?date=2026-07-10')
       .expect(200);
-    expect(kept.body.contact).toBeNull();
-    expect(kept.body.amount).toBe(100);
+    expect(day.body.items).toHaveLength(1);
+    expect(day.body.items[0].id).toBe(unrelated.body.id);
+
+    const summary = await authed(app, user)
+      .get('/api/v1/transactions/summary?year=2026&month=7')
+      .expect(200);
+    expect(summary.body.income).toBe(70);
+  });
+
+  it('resolves contactName on update, creating the contact when new', async () => {
+    const user = await registerUser(app);
+    const original = await createContact(app, user, 'Original');
+    const tx = await authed(app, user)
+      .post('/api/v1/transactions')
+      .send({ type: 'income', amount: 500, date: '2026-07-11', contactId: original.id })
+      .expect(201);
+
+    // Income settles the debt, so the first contact went 500 below zero.
+    const before = await authed(app, user)
+      .get(`/api/v1/contacts/${original.id}`)
+      .expect(200);
+    expect(before.body.owesUs).toBe(-500);
+
+    const moved = await authed(app, user)
+      .patch(`/api/v1/transactions/${tx.body.id}`)
+      .send({ contactName: 'Brand New' })
+      .expect(200);
+    expect(moved.body.contact.name).toBe('Brand New');
+
+    // The old contact is made whole and the new one carries the effect.
+    const after = await authed(app, user)
+      .get(`/api/v1/contacts/${original.id}`)
+      .expect(200);
+    expect(after.body.owesUs).toBe(0);
+
+    const created = await authed(app, user)
+      .get(`/api/v1/contacts/${moved.body.contact.id}`)
+      .expect(200);
+    expect(created.body.owesUs).toBe(-500);
+  });
+
+  it('deleting a transaction reverses the balance it applied', async () => {
+    const user = await registerUser(app);
+    const contact = await createContact(app, user, 'Reversible');
+    const tx = await authed(app, user)
+      .post('/api/v1/transactions')
+      .send({ type: 'expense', amount: 320, date: '2026-07-12', contactId: contact.id })
+      .expect(201);
+
+    const owed = await authed(app, user).get(`/api/v1/contacts/${contact.id}`).expect(200);
+    expect(owed.body.owesUs).toBe(320);
+
+    await authed(app, user).delete(`/api/v1/transactions/${tx.body.id}`).expect(204);
+
+    const settled = await authed(app, user)
+      .get(`/api/v1/contacts/${contact.id}`)
+      .expect(200);
+    expect(settled.body.owesUs).toBe(0);
+    // The contact itself survives its transaction being removed.
+    expect(settled.body.name).toBe('Reversible');
   });
 
   it('has the b-tree index on (user_id, date)', async () => {

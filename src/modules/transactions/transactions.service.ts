@@ -223,7 +223,17 @@ export class TransactionsService {
       if (dto.amount !== undefined) transaction.amount = money(dto.amount);
       if (dto.currency !== undefined) transaction.currency = dto.currency;
       if (dto.date !== undefined) transaction.date = dto.date;
-      if (dto.contactId !== undefined) transaction.contactId = dto.contactId;
+      // contactId wins over contactName when both are sent.
+      if (dto.contactId !== undefined) {
+        transaction.contactId = dto.contactId;
+      } else if (dto.contactName !== undefined) {
+        const contact = await this.ledger.findOrCreateByName(
+          manager,
+          userId,
+          dto.contactName,
+        );
+        transaction.contactId = contact.id;
+      }
       if (dto.wagonId !== undefined) {
         if (dto.wagonId) await this.assertWagonOwned(manager, userId, dto.wagonId);
         transaction.wagonId = dto.wagonId;

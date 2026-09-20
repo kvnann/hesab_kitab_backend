@@ -109,6 +109,54 @@ describe('Contacts (e2e)', () => {
     });
   });
 
+  it('unlinks wagons but keeps them when the contact is deleted', async () => {
+    const fresh = await registerUser(app);
+    const wagon = await authed(app, fresh)
+      .post('/api/v1/wagons')
+      .send({
+        name: '676',
+        buyVolume: 205,
+        buyPrice: 200,
+        boughtFrom: 'Kənan',
+        sellVolume: 200,
+        sellPrice: 200,
+        soldTo: 'Namiq',
+      })
+      .expect(201);
+
+    const contacts = await authed(app, fresh).get('/api/v1/contacts').expect(200);
+    const seller = contacts.body.find((c: { name: string }) => c.name === 'Kənan');
+
+    await authed(app, fresh).delete(`/api/v1/contacts/${seller.id}`).expect(204);
+
+    const kept = await authed(app, fresh).get(`/api/v1/wagons/${wagon.body.id}`).expect(200);
+    expect(kept.body.boughtFrom).toBeNull();
+    // The numbers and the untouched sell side survive the unlink.
+    expect(kept.body.buyTotal).toBe(41000);
+    expect(kept.body.soldTo.name).toBe('Namiq');
+  });
+
+  it('stores free-form notes on a contact', async () => {
+    const fresh = await registerUser(app);
+    const created = await authed(app, fresh)
+      .post('/api/v1/contacts')
+      .send({ name: 'Şamil Əliyev' })
+      .expect(201);
+    expect(created.body.description).toBeNull();
+
+    const noted = await authed(app, fresh)
+      .patch(`/api/v1/contacts/${created.body.id}`)
+      .send({ description: 'Ünvan: Bakı, Nizami küç. Həmişə nağd ödəyir.' })
+      .expect(200);
+    expect(noted.body.description).toBe('Ünvan: Bakı, Nizami küç. Həmişə nağd ödəyir.');
+
+    const cleared = await authed(app, fresh)
+      .patch(`/api/v1/contacts/${created.body.id}`)
+      .send({ description: null })
+      .expect(200);
+    expect(cleared.body.description).toBeNull();
+  });
+
   it("isolates users: one user cannot see another's contacts", async () => {
     const other = await registerUser(app);
     const created = await authed(app, user)

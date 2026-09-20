@@ -108,6 +108,17 @@ export class UpdateTransactionDto {
   @IsUUID()
   contactId?: string | null;
 
+  @ApiPropertyOptional({
+    description:
+      'Alternative to contactId: contact name, auto-created when it does not exist',
+    example: 'Kənan',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  contactName?: string;
+
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)
