@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TestUser,
@@ -99,6 +100,272 @@ describe('Wagons (e2e)', () => {
     expect(updated.body.status).toBe('closed');
     expect(await contactBalance(app, user, 'Kənan')).toBe(-40000);
     expect(await contactBalance(app, user, 'Namiq')).toBe(41000);
+  });
+
+  it('applies the balance when a contact is added to an existing side', async () => {
+    const user = await registerUser(app);
+    // Created without "Kimdən alınıb" — nobody to bill yet.
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '676', buyVolume: 205, buyPrice: 200 })
+      .expect(201);
+    expect(wagon.body.boughtFrom).toBeNull();
+
+    // Editing the wagon to name the seller must move that seller's balance:
+    // the side was never a deliberate cash deal, it just had no contact.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ buyVolume: 205, buyPrice: 200, boughtFrom: 'Etibar' })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
+
+    // Same on the sell side.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ sellVolume: 200, sellPrice: 200, soldTo: 'Namiq' })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(40000);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
+  });
+
+  it('keeps a cash deal cash when the wagon is edited', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '678',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Cash Seller',
+        applyBuyToBalance: false,
+      })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Cash Seller')).toBe(0);
+
+    // An unrelated edit must not turn the cash deal into a debt.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ buyPrice: 12 })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Cash Seller')).toBe(0);
+  });
+
+  it('moves the balance to the new contact when the counterparty changes', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '679', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar' })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ boughtFrom: 'Rəşad' })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(0);
+    expect(await contactBalance(app, user, 'Rəşad')).toBe(-1000);
+  });
+
+  it('reverses both contacts when the wagon is deleted', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '680',
+        buyVolume: 205,
+        buyPrice: 200,
+        boughtFrom: 'Etibar',
+        sellVolume: 200,
+        sellPrice: 200,
+        soldTo: 'Namiq',
+      })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(40000);
+
+    await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
+
+    // The contacts survive; only the wagon's effect is undone.
+    expect(await contactBalance(app, user, 'Etibar')).toBe(0);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(0);
+  });
+
+  it('repairs a wagon whose contact was linked but never billed', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '681',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        applyBuyToBalance: false,
+      })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(0);
+
+    // What the wagon form now sends on save: explicitly authoritative.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        applyBuyToBalance: true,
+      })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+  });
+
+  it('leaves a labelled row on each contact page and keeps the till clean', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '676',
+        buyVolume: 205,
+        buyPrice: 200,
+        boughtFrom: 'Etibar',
+        sellVolume: 200,
+        sellPrice: 200,
+        soldTo: 'Namiq',
+      })
+      .expect(201);
+
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
+    const namiq = contacts.body.find((c: { name: string }) => c.name === 'Namiq');
+
+    const bought = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(bought.body.items).toHaveLength(1);
+    expect(bought.body.items[0]).toMatchObject({
+      description: 'Mal alışı - 676',
+      amount: 41000,
+      source: 'wagon',
+      affectsBalance: false,
+      type: 'other',
+    });
+
+    const sold = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${namiq.id}`)
+      .expect(200);
+    expect(sold.body.items[0].description).toBe('Mal satışı - 676');
+
+    // The wagon moved no cash, so the till and the month stay at zero.
+    const cash = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body).toMatchObject({ income: 0, expense: 0, net: 0 });
+
+    // And the rows are hidden from the day report, which is a cash report.
+    const today = new Date().toISOString().slice(0, 10);
+    const day = await authed(app, user)
+      .get(`/api/v1/transactions?date=${today}&source=manual`)
+      .expect(200);
+    expect(day.body.items).toHaveLength(0);
+
+    // They belong to the wagon and cannot be edited or deleted on their own.
+    const rowId = bought.body.items[0].id;
+    await authed(app, user)
+      .patch(`/api/v1/transactions/${rowId}`)
+      .send({ amount: 5 })
+      .expect(400);
+    await authed(app, user).delete(`/api/v1/transactions/${rowId}`).expect(400);
+
+    // Editing the wagon rewrites them rather than piling up duplicates.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ buyPrice: 210 })
+      .expect(200);
+    const afterEdit = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(afterEdit.body.items).toHaveLength(1);
+    expect(afterEdit.body.items[0].amount).toBe(43050);
+
+    // Renaming the wagon updates the text.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ name: '999' })
+      .expect(200);
+    const renamed = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(renamed.body.items[0].description).toBe('Mal alışı - 999');
+
+    // Deleting the wagon takes its rows with it.
+    await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
+    const gone = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(gone.body.items).toHaveLength(0);
+  });
+
+  it('removes the row when a side loses its contact', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '682', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar' })
+      .expect(201);
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
+    expect(
+      (await authed(app, user).get(`/api/v1/transactions?contactId=${etibar.id}`)).body.items,
+    ).toHaveLength(1);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ boughtFrom: null })
+      .expect(200);
+
+    const after = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(after.body.items).toHaveLength(0);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(0);
+  });
+
+  it('back-fills the row for a wagon that predates the feature, without double-billing', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '683', buyVolume: 1, buyPrice: 15129, boughtFrom: 'Etibar' })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-15129);
+
+    // Simulate a wagon created before this feature existed: the balance was
+    // applied, but no explanatory row was ever written.
+    const dataSource = app.get(DataSource);
+    await dataSource.query(
+      `DELETE FROM transactions WHERE wagon_id = $1 AND source = 'wagon'`,
+      [wagon.body.id],
+    );
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
+    expect(
+      (await authed(app, user).get(`/api/v1/transactions?contactId=${etibar.id}`)).body
+        .items,
+    ).toHaveLength(0);
+
+    // Re-saving the wagon from the app back-fills the row and leaves the
+    // balance exactly where it was — reversed and re-applied, not applied twice.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({
+        name: '683',
+        buyVolume: 1,
+        buyPrice: 15129,
+        boughtFrom: 'Etibar',
+        applyBuyToBalance: true,
+      })
+      .expect(200);
+
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-15129);
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(rows.body.items).toHaveLength(1);
+    expect(rows.body.items[0].description).toBe('Mal alışı - 683');
   });
 
   it('rejects wagons with no side and half-filled sides', async () => {

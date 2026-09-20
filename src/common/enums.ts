@@ -20,6 +20,16 @@ export enum TransactionType {
   OTHER = 'other',
 }
 
+/**
+ * Where a transaction came from. 'wagon' rows are created and owned by a
+ * wagon's buy/sell side: they document a balance change on the contact's page
+ * but move no cash, so they stay out of the till and the day/month totals.
+ */
+export enum TransactionSource {
+  MANUAL = 'manual',
+  WAGON = 'wagon',
+}
+
 /** Direction of an initial contact balance, as chosen in the UI. */
 export enum OwingDirection {
   OWES_US = 'owes_us',

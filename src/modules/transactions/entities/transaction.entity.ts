@@ -8,7 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Currency, TransactionType } from '../../../common/enums';
+import { Currency, TransactionSource, TransactionType } from '../../../common/enums';
 import { decimalTransformer } from '../../../common/transformers/decimal.transformer';
 import { Contact } from '../../contacts/entities/contact.entity';
 import { User } from '../../users/entities/user.entity';
@@ -63,6 +63,19 @@ export class Transaction {
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;
+
+  /**
+   * 'wagon' rows are generated and owned by a wagon side. They are visible on
+   * the contact's page, cannot be edited on their own, and never count towards
+   * the till or the day/month money totals.
+   */
+  @Column({
+    type: 'enum',
+    enum: TransactionSource,
+    enumName: 'transaction_source_enum',
+    default: TransactionSource.MANUAL,
+  })
+  source!: TransactionSource;
 
   /**
    * When false ("Digər" operations), the transaction is list-only: it counts

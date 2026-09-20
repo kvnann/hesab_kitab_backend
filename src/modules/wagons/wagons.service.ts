@@ -5,10 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
-import { Currency } from '../../common/enums';
+import { Currency, TransactionSource, TransactionType } from '../../common/enums';
 import { total } from '../../common/utils/decimal.util';
 import { ContactLedgerService } from '../contacts/contact-ledger.service';
 import { Settings } from '../settings/entities/settings.entity';
+import { Transaction } from '../transactions/entities/transaction.entity';
 import { CreateWagonDto, ListWagonsDto, UpdateWagonDto } from './dto/wagon.dto';
 import { Wagon } from './entities/wagon.entity';
 
@@ -74,6 +75,8 @@ export class WagonsService {
       }
 
       const saved = await repo.save(wagon);
+      await this.syncSideTransaction(manager, userId, saved, 'buy');
+      await this.syncSideTransaction(manager, userId, saved, 'sell');
       return saved.id;
     });
 
@@ -116,16 +119,27 @@ export class WagonsService {
       // the reverse/re-apply cycle: re-applying converts with the *current*
       // exchange rate, which would silently shift balances if the rate moved.
       if (!this.touchesBalance(dto)) {
+        const renamed = dto.name !== undefined && dto.name.trim() !== wagon.name;
         if (dto.name !== undefined) wagon.name = dto.name.trim();
         if (dto.status !== undefined) wagon.status = dto.status;
         if (dto.description !== undefined) wagon.description = dto.description;
         await repo.save(wagon);
+        // The generated rows carry the wagon name in their text.
+        if (renamed) {
+          await this.syncSideTransaction(manager, userId, wagon, 'buy');
+          await this.syncSideTransaction(manager, userId, wagon, 'sell');
+        }
         return;
       }
 
       const settings = await this.getSettings(manager, userId);
       const hadBuySide = this.hasBuySide(wagon);
       const hadSellSide = this.hasSellSide(wagon);
+      // Captured before the merge below rewrites the contact columns. A side
+      // that had no contact was never "chosen" not to affect a balance — there
+      // was simply nobody to affect.
+      const hadBuyContact = wagon.boughtFromContactId !== null;
+      const hadSellContact = wagon.soldToContactId !== null;
 
       // 1. Reverse prior effects (skip when the contact has been deleted).
       await this.reverseSide(manager, userId, wagon, 'buy');
@@ -186,9 +200,11 @@ export class WagonsService {
       );
 
       // 5. Re-apply balance effects on the merged state. Defaults: a side that
-      // already existed keeps its previous applied/not-applied choice; a side
-      // added by this update applies automatically (per the product notes).
-      const applyBuy = dto.applyBuyToBalance ?? (hadBuySide ? wasBuyApplied : true);
+      // already had a contact keeps its previous applied/not-applied choice
+      // (that is how a cash deal stays a cash deal); a side that is new, or
+      // that is only now getting a contact, applies automatically.
+      const applyBuy =
+        dto.applyBuyToBalance ?? (hadBuySide && hadBuyContact ? wasBuyApplied : true);
       if (this.hasBuySide(wagon) && wagon.boughtFromContactId && applyBuy) {
         const contact = await this.ledger.lockContact(
           manager,
@@ -206,7 +222,8 @@ export class WagonsService {
         }
       }
 
-      const applySell = dto.applySellToBalance ?? (hadSellSide ? wasSellApplied : true);
+      const applySell =
+        dto.applySellToBalance ?? (hadSellSide && hadSellContact ? wasSellApplied : true);
       if (this.hasSellSide(wagon) && wagon.soldToContactId && applySell) {
         const contact = await this.ledger.lockContact(
           manager,
@@ -225,6 +242,8 @@ export class WagonsService {
       }
 
       await repo.save(wagon);
+      await this.syncSideTransaction(manager, userId, wagon, 'buy');
+      await this.syncSideTransaction(manager, userId, wagon, 'sell');
     });
 
     return this.findOne(userId, id);
@@ -243,8 +262,68 @@ export class WagonsService {
 
       await this.reverseSide(manager, userId, wagon, 'buy');
       await this.reverseSide(manager, userId, wagon, 'sell');
+      await manager.getRepository(Transaction).delete({
+        userId,
+        wagonId: wagon.id,
+        source: TransactionSource.WAGON,
+      });
       await repo.delete({ id: wagon.id });
     });
+  }
+
+  /**
+   * Mirror one wagon side into a transaction on the contact's page, so the
+   * balance change has a visible reason ("Mal alışı - 676") instead of moving
+   * on its own. The row documents the wagon's effect; it never applies one of
+   * its own (affectsBalance is false) and never counts towards the till.
+   *
+   * Rewritten from scratch on every save: one row per side at most, gone as
+   * soon as the side loses its contact, its numbers, or its balance effect.
+   */
+  private async syncSideTransaction(
+    manager: EntityManager,
+    userId: string,
+    wagon: Wagon,
+    side: 'buy' | 'sell',
+  ): Promise<void> {
+    const repo = manager.getRepository(Transaction);
+    const contactId =
+      side === 'buy' ? wagon.boughtFromContactId : wagon.soldToContactId;
+    const applied = side === 'buy' ? wagon.buyAppliedAmount : wagon.sellAppliedAmount;
+    const sideTotal = side === 'buy' ? wagon.buyTotal : wagon.sellTotal;
+    const description = `${side === 'buy' ? 'Mal alışı' : 'Mal satışı'} - ${wagon.name}`;
+
+    const existing = await repo.find({
+      where: { userId, wagonId: wagon.id, source: TransactionSource.WAGON },
+    });
+    const mine = existing.filter((row) =>
+      side === 'buy'
+        ? row.description?.startsWith('Mal alışı')
+        : row.description?.startsWith('Mal satışı'),
+    );
+    if (mine.length > 0) {
+      await repo.delete(mine.map((row) => row.id));
+    }
+
+    // Nothing to show when the side has no contact, no numbers, or was
+    // recorded as a cash deal that never touched a balance.
+    if (!contactId || applied === null || applied === 0 || sideTotal === null) return;
+
+    await repo.save(
+      repo.create({
+        userId,
+        type: TransactionType.OTHER,
+        amount: sideTotal,
+        currency: wagon.currency,
+        date: toIsoDate(new Date()),
+        contactId,
+        wagonId: wagon.id,
+        description,
+        affectsBalance: false,
+        balanceAppliedAmount: null,
+        source: TransactionSource.WAGON,
+      }),
+    );
   }
 
   private async reverseSide(
@@ -318,4 +397,12 @@ export class WagonsService {
       );
     }
   }
+}
+
+/** Local calendar date (YYYY-MM-DD), matching the transactions date column. */
+function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
