@@ -62,6 +62,28 @@ describe('Contacts (e2e)', () => {
     expect(row.phone).not.toBe(phone);
   });
 
+  it('creates a contact with no balance from a name alone', async () => {
+    // What "Yeni əməliyyat" sends when the amount is 0: register the person,
+    // book nothing.
+    const fresh = await registerUser(app);
+    const created = await authed(app, fresh)
+      .post('/api/v1/contacts')
+      .send({ name: 'Etibar' })
+      .expect(201);
+    expect(created.body.owesUs).toBe(0);
+
+    const summary = await authed(app, fresh).get('/api/v1/contacts/summary').expect(200);
+    expect(summary.body).toMatchObject({ receivable: 0, payable: 0, net: 0, count: 1 });
+
+    // No operation was recorded anywhere.
+    const transactions = await authed(app, fresh)
+      .get(`/api/v1/transactions?contactId=${created.body.id}`)
+      .expect(200);
+    expect(transactions.body.items).toHaveLength(0);
+    const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body.net).toBe(0);
+  });
+
   it('rejects duplicate names case-insensitively with 409', async () => {
     await authed(app, user).post('/api/v1/contacts').send({ name: 'Kənan' }).expect(201);
     await authed(app, user).post('/api/v1/contacts').send({ name: 'kənan' }).expect(409);
