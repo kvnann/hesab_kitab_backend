@@ -7,6 +7,7 @@ import configuration, { AppConfig } from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BackupModule } from './modules/backup/backup.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { HealthModule } from './modules/health/health.module';
@@ -47,6 +48,7 @@ import { WagonsModule } from './modules/wagons/wagons.module';
     WagonsModule,
     TransactionsModule,
     SettingsModule,
+    BackupModule,
     HealthModule,
   ],
   providers: [
