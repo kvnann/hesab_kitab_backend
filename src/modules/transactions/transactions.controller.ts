@@ -21,6 +21,7 @@ import {
   CreateTransactionDto,
   ListTransactionsDto,
   MonthSummaryDto,
+  SetAffectsCashDto,
   UpdateTransactionDto,
 } from './dto/transaction.dto';
 import { Transaction } from './entities/transaction.entity';
@@ -85,6 +86,19 @@ export class TransactionsController {
     @Body() dto: UpdateTransactionDto,
   ): Promise<Transaction> {
     return this.transactionsService.update(user.id, id, dto);
+  }
+
+  @Patch(':id/cash')
+  @ApiOperation({
+    summary:
+      'Include or drop one operation from the till; wagon rows flip the wagon side',
+  })
+  setAffectsCash(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetAffectsCashDto,
+  ): Promise<Transaction> {
+    return this.transactionsService.setAffectsCash(user.id, id, dto.affectsCash);
   }
 
   @Delete(':id')

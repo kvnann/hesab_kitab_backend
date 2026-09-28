@@ -245,7 +245,8 @@ describe('Wagons (e2e)', () => {
       amount: 41000,
       source: 'wagon',
       affectsBalance: false,
-      type: 'other',
+      // A wagon row's type carries the direction: the seller's balance fell.
+      type: 'income',
     });
 
     const sold = await authed(app, user)
@@ -366,6 +367,328 @@ describe('Wagons (e2e)', () => {
       .expect(200);
     expect(rows.body.items).toHaveLength(1);
     expect(rows.body.items[0].description).toBe('Mal alışı - 683');
+  });
+
+  it('bills customs to the buyer when the buyer carries it', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '690',
+        buyVolume: 205,
+        buyPrice: 200,
+        boughtFrom: 'Etibar',
+        sellVolume: 200,
+        sellPrice: 200,
+        soldTo: 'Namiq',
+        customsExpense: 500,
+        customsPayer: 'buyer',
+      })
+      .expect(201);
+    expect(wagon.body.customsExpense).toBe(500);
+    expect(wagon.body.customsPayer).toBe('buyer');
+
+    // Buyer owes the sale plus the customs we laid out; the seller is untouched.
+    expect(await contactBalance(app, user, 'Namiq')).toBe(40000 + 500);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
+
+    // Customs is carried by a counterparty, so it does not move "Fərq".
+    expect(wagon.body.difference).toBe(-1000);
+
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const namiq = contacts.body.find((c: { name: string }) => c.name === 'Namiq');
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${namiq.id}`)
+      .expect(200);
+    const customs = rows.body.items.find((r: { description: string }) =>
+      r.description?.startsWith('Gömrük xərci'),
+    );
+    expect(customs).toMatchObject({
+      description: 'Gömrük xərci - 690',
+      amount: 500,
+      source: 'wagon',
+      affectsBalance: false,
+      type: 'expense',
+    });
+
+    // No cash moved.
+    const cash = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body.net).toBe(0);
+  });
+
+  it('bills customs to the seller when the seller carries it', async () => {
+    const user = await registerUser(app);
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '691',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: 250,
+        customsPayer: 'seller',
+      })
+      .expect(201);
+
+    // We owe 1000 for the wagon but laid out 250 on their behalf.
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000 + 250);
+  });
+
+  it('re-applies customs exactly when it is edited or cleared', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '692',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: 250,
+        customsPayer: 'seller',
+      })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-750);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ customsExpense: 400 })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-600);
+
+    // Moving the cost to the buyer takes it off the seller entirely.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ sellVolume: 100, sellPrice: 12, soldTo: 'Namiq', customsPayer: 'buyer' })
+      .expect(200);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(1200 + 400);
+
+    // Clearing it reverses the delta and removes the row.
+    const cleared = await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ customsExpense: null })
+      .expect(200);
+    expect(cleared.body.customsExpense).toBeNull();
+    expect(cleared.body.customsPayer).toBeNull();
+    expect(await contactBalance(app, user, 'Namiq')).toBe(1200);
+
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const namiq = contacts.body.find((c: { name: string }) => c.name === 'Namiq');
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${namiq.id}`)
+      .expect(200);
+    expect(
+      rows.body.items.filter((r: { description: string }) =>
+        r.description?.startsWith('Gömrük xərci'),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('reverses customs when the wagon is deleted', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '693',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: 300,
+        customsPayer: 'seller',
+      })
+      .expect(201);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-700);
+
+    await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
+    expect(await contactBalance(app, user, 'Etibar')).toBe(0);
+  });
+
+  it('refuses customs that nobody carries', async () => {
+    const user = await registerUser(app);
+    // An amount with no payer.
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '694', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar', customsExpense: 100 })
+      .expect(400);
+
+    // A payer whose side has no contact.
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '695',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: 100,
+        customsPayer: 'buyer',
+      })
+      .expect(400);
+
+    // Negative customs is not a thing.
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '696',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: -50,
+        customsPayer: 'seller',
+      })
+      .expect(400);
+  });
+
+  it('treats a wagon with no customs exactly as before', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '697', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar' })
+      .expect(201);
+    expect(wagon.body.customsExpense).toBeNull();
+    expect(wagon.body.customsPayer).toBeNull();
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+  });
+
+  it('sends each wagon side through the till only when asked', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '700',
+        buyVolume: 205,
+        buyPrice: 200,
+        boughtFrom: 'Etibar',
+        sellVolume: 200,
+        sellPrice: 200,
+        soldTo: 'Namiq',
+      })
+      .expect(201);
+
+    // Nothing opted in yet.
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+
+    // Paying for the goods out of the pocket takes money out of it.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ buyThroughCash: true })
+      .expect(200);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(-41000);
+
+    // Taking the sale into the pocket puts money in.
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ sellThroughCash: true })
+      .expect(200);
+    const both = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
+    expect(both.body).toMatchObject({ income: 40000, expense: 41000, net: -1000 });
+
+    // Balances are untouched by any of this.
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(40000);
+  });
+
+  it('accepts the till flags at creation time', async () => {
+    const user = await registerUser(app);
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '701',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        buyThroughCash: true,
+      })
+      .expect(201);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(-1000);
+  });
+
+  it('flips the wagon side when its row is dropped from the till', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '702',
+        sellVolume: 100,
+        sellPrice: 10,
+        soldTo: 'Namiq',
+        sellThroughCash: true,
+      })
+      .expect(201);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(1000);
+
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const namiq = contacts.body.find((c: { name: string }) => c.name === 'Namiq');
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${namiq.id}`)
+      .expect(200);
+    const row = rows.body.items[0];
+    expect(row.wagonSide).toBe('sell');
+
+    // Dropping the row from the till must also clear the wagon's own flag, or
+    // the next wagon save would silently put it back.
+    await authed(app, user)
+      .patch(`/api/v1/transactions/${row.id}/cash`)
+      .send({ affectsCash: false })
+      .expect(200);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+
+    const reread = await authed(app, user)
+      .get(`/api/v1/wagons/${wagon.body.id}`)
+      .expect(200);
+    expect(reread.body.sellThroughCash).toBe(false);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ description: 'qeyd' })
+      .expect(200);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+  });
+
+  it('keeps customs out of the till', async () => {
+    const user = await registerUser(app);
+    await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '703',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        customsExpense: 300,
+        customsPayer: 'seller',
+      })
+      .expect(201);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    const customs = rows.body.items.find(
+      (r: { wagonSide: string }) => r.wagonSide === 'customs',
+    );
+    await authed(app, user)
+      .patch(`/api/v1/transactions/${customs.id}/cash`)
+      .send({ affectsCash: true })
+      .expect(400);
+  });
+
+  it('removes the till effect when the wagon is deleted', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '704',
+        buyVolume: 100,
+        buyPrice: 10,
+        boughtFrom: 'Etibar',
+        buyThroughCash: true,
+      })
+      .expect(201);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(-1000);
+
+    await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
   });
 
   it('rejects wagons with no side and half-filled sides', async () => {

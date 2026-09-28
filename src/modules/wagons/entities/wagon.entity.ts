@@ -9,7 +9,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Currency, WagonStatus } from '../../../common/enums';
+import { CustomsPayer, Currency, WagonStatus } from '../../../common/enums';
 import { decimalTransformer } from '../../../common/transformers/decimal.transformer';
 import { sub, total } from '../../../common/utils/decimal.util';
 import { Contact } from '../../contacts/entities/contact.entity';
@@ -124,6 +124,46 @@ export class Wagon {
     transformer: decimalTransformer,
   })
   sellAppliedAmount!: number | null;
+
+  /** Whether the purchase was paid out of the till. */
+  @Column({ name: 'buy_through_cash', type: 'boolean', default: false })
+  buyThroughCash!: boolean;
+
+  /** Whether the sale proceeds were taken into the till. */
+  @Column({ name: 'sell_through_cash', type: 'boolean', default: false })
+  sellThroughCash!: boolean;
+
+  // ── Customs ("Gömrük xərci") ─────────────────────────────────
+  /** Optional cost one of the counterparties carries; null or 0 means none. */
+  @Column({
+    name: 'customs_expense',
+    type: 'numeric',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  customsExpense!: number | null;
+
+  @Column({
+    name: 'customs_payer',
+    type: 'enum',
+    enum: CustomsPayer,
+    enumName: 'customs_payer_enum',
+    nullable: true,
+  })
+  customsPayer!: CustomsPayer | null;
+
+  /** Signed delta applied to the payer's owes_us, for exact reversal. */
+  @Column({
+    name: 'customs_applied_amount',
+    type: 'numeric',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  customsAppliedAmount!: number | null;
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;

@@ -9,6 +9,19 @@ export enum SecondaryCurrency {
   EURO = 'euro',
 }
 
+/** Which part of a wagon a generated ledger row came from. */
+export enum WagonSide {
+  BUY = 'buy',
+  SELL = 'sell',
+  CUSTOMS = 'customs',
+}
+
+/** Who carries a wagon's customs cost: the buyer (Alıcı) or seller (Satıcı). */
+export enum CustomsPayer {
+  BUYER = 'buyer',
+  SELLER = 'seller',
+}
+
 export enum WagonStatus {
   OPEN = 'open',
   CLOSED = 'closed',

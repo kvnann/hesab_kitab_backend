@@ -8,7 +8,12 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Currency, TransactionSource, TransactionType } from '../../../common/enums';
+import {
+  Currency,
+  TransactionSource,
+  TransactionType,
+  WagonSide,
+} from '../../../common/enums';
 import { decimalTransformer } from '../../../common/transformers/decimal.transformer';
 import { Contact } from '../../contacts/entities/contact.entity';
 import { User } from '../../users/entities/user.entity';
@@ -97,6 +102,37 @@ export class Transaction {
     transformer: decimalTransformer,
   })
   balanceAppliedAmount!: number | null;
+
+  /**
+   * Whether this operation moves the till ("Kassa"). Off by default: a debt
+   * operation only reaches the pocket when the user says it did.
+   */
+  @Column({ name: 'affects_cash', type: 'boolean', default: false })
+  affectsCash!: boolean;
+
+  /**
+   * Signed amount applied to the till (positive in, negative out). The Kassa
+   * total is the sum of this column, so it can never drift from the rows.
+   */
+  @Column({
+    name: 'cash_applied_amount',
+    type: 'numeric',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  cashAppliedAmount!: number | null;
+
+  /** For wagon-generated rows: which side of the wagon produced this row. */
+  @Column({
+    name: 'wagon_side',
+    type: 'enum',
+    enum: WagonSide,
+    enumName: 'wagon_side_enum',
+    nullable: true,
+  })
+  wagonSide!: WagonSide | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

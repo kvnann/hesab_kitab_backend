@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -76,6 +76,15 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsBoolean()
   affectsBalance?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'true when the operation moves the till ("Kassadan Ver/Al"). Off by default',
+  })
+  @IsOptional()
+  @IsBoolean()
+  affectsCash?: boolean;
 }
 
 /** Explicit null on contactId/wagonId/description clears the field. */
@@ -136,6 +145,22 @@ export class UpdateTransactionDto {
   @IsOptional()
   @IsBoolean()
   affectsBalance?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'true when the operation moves the till ("Kassadan Ver/Al"). Off by default',
+  })
+  @IsOptional()
+  @IsBoolean()
+  affectsCash?: boolean;
+}
+
+/** Body of PATCH /transactions/:id/cash. */
+export class SetAffectsCashDto {
+  @ApiProperty({ description: 'true adds the operation to the till, false removes it' })
+  @IsBoolean()
+  affectsCash!: boolean;
 }
 
 export class ListTransactionsDto extends PaginationDto {
@@ -177,6 +202,12 @@ export class ListTransactionsDto extends PaginationDto {
   @IsOptional()
   @IsEnum(TransactionSource)
   source?: TransactionSource;
+
+  @ApiPropertyOptional({ description: 'Only till operations (true) or only non-till (false)' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  affectsCash?: boolean;
 }
 
 export class MonthSummaryDto {

@@ -2,7 +2,12 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Paginated, paginate } from '../../common/dto/pagination.dto';
-import { Currency, TransactionSource, TransactionType } from '../../common/enums';
+import {
+  Currency,
+  TransactionSource,
+  TransactionType,
+  WagonSide,
+} from '../../common/enums';
 import { money } from '../../common/utils/decimal.util';
 import { ContactLedgerService } from '../contacts/contact-ledger.service';
 import { Settings } from '../settings/entities/settings.entity';
@@ -78,9 +83,11 @@ export class TransactionsService {
         wagonId: dto.wagonId ?? null,
         description: dto.description ?? null,
         affectsBalance: dto.affectsBalance ?? true,
+        affectsCash: dto.affectsCash ?? false,
       });
 
       await this.applyBalanceEffect(manager, userId, transaction);
+      await this.applyCashEffect(manager, userId, transaction);
       const saved = await repo.save(transaction);
       return saved.id;
     });
@@ -115,6 +122,11 @@ export class TransactionsService {
     }
     if (filter.source) {
       qb.andWhere('transaction.source = :source', { source: filter.source });
+    }
+    if (filter.affectsCash !== undefined) {
+      qb.andWhere('transaction.affects_cash = :affectsCash', {
+        affectsCash: filter.affectsCash,
+      });
     }
 
     const [items, total] = await qb
@@ -212,37 +224,81 @@ export class TransactionsService {
    * moves when a transaction is added, edited or deleted.
    */
   async cashSummary(userId: string): Promise<CashSummary> {
-    const settings = await this.dataSource
-      .getRepository(Settings)
-      .findOneByOrFail({ userId });
-
-    const primaryAmount = `
-      CASE WHEN transaction.currency = :primaryCurrency
-           THEN transaction.amount
-           ELSE ROUND(transaction.amount / :exchangeRate, 2)
-      END`;
-
     const raw = await this.transactionsRepository
       .createQueryBuilder('transaction')
       .select(
-        `COALESCE(SUM(${primaryAmount}) FILTER (WHERE transaction.type = 'income'), 0)`,
+        'COALESCE(SUM(transaction.cash_applied_amount) FILTER (WHERE transaction.cash_applied_amount > 0), 0)',
         'income',
       )
       .addSelect(
-        `COALESCE(SUM(${primaryAmount}) FILTER (WHERE transaction.type = 'expense'), 0)`,
+        'COALESCE(-SUM(transaction.cash_applied_amount) FILTER (WHERE transaction.cash_applied_amount < 0), 0)',
         'expense',
       )
+      .addSelect('COALESCE(SUM(transaction.cash_applied_amount), 0)', 'net')
       .where('transaction.user_id = :userId', { userId })
-      .andWhere('transaction.source = :manual', { manual: TransactionSource.MANUAL })
-      .setParameters({
-        primaryCurrency: settings.primaryCurrency,
-        exchangeRate: settings.exchangeRate,
-      })
-      .getRawOne<{ income: string; expense: string }>();
+      .getRawOne<{ income: string; expense: string; net: string }>();
 
-    const income = money(raw?.income ?? 0);
-    const expense = money(raw?.expense ?? 0);
-    return { income, expense, net: money(income - expense) };
+    return {
+      income: money(raw?.income ?? 0),
+      expense: money(raw?.expense ?? 0),
+      net: money(raw?.net ?? 0),
+    };
+  }
+
+  /**
+   * Include or drop a single row from the till. Wagon-generated rows are owned
+   * by their wagon, so the flag is flipped on the wagon's matching side and the
+   * row is rewritten from there — otherwise the two would disagree.
+   */
+  async setAffectsCash(
+    userId: string,
+    id: string,
+    affectsCash: boolean,
+  ): Promise<Transaction> {
+    await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Transaction);
+      const transaction = await repo
+        .createQueryBuilder('transaction')
+        .setLock('pessimistic_write')
+        .where('transaction.id = :id AND transaction.user_id = :userId', { id, userId })
+        .getOne();
+      if (!transaction) throw new NotFoundException('Transaction not found');
+
+      if (transaction.source === TransactionSource.WAGON) {
+        if (transaction.wagonSide === WagonSide.CUSTOMS || !transaction.wagonId) {
+          throw new BadRequestException(
+            'Gömrük xərci kassaya daxil edilmir — vaqon səhifəsindən dəyişin',
+          );
+        }
+        const wagons = manager.getRepository(Wagon);
+        const wagon = await wagons.findOneBy({ id: transaction.wagonId, userId });
+        if (!wagon) throw new NotFoundException('Wagon not found');
+
+        if (transaction.wagonSide === WagonSide.BUY) wagon.buyThroughCash = affectsCash;
+        else wagon.sellThroughCash = affectsCash;
+        await wagons.save(wagon);
+
+        transaction.affectsCash = affectsCash;
+        transaction.cashAppliedAmount = affectsCash
+          ? this.wagonCashDelta(transaction)
+          : null;
+        await repo.save(transaction);
+        return;
+      }
+
+      transaction.affectsCash = affectsCash;
+      await this.applyCashEffect(manager, userId, transaction);
+      await repo.save(transaction);
+    });
+
+    return this.findOne(userId, id);
+  }
+
+  /** Buying pays money out of the till; selling brings it in. */
+  private wagonCashDelta(transaction: Transaction): number {
+    return transaction.wagonSide === WagonSide.BUY
+      ? -transaction.amount
+      : transaction.amount;
   }
 
   async findOne(userId: string, id: string): Promise<Transaction> {
@@ -295,8 +351,12 @@ export class TransactionsService {
       if (dto.affectsBalance !== undefined) {
         transaction.affectsBalance = dto.affectsBalance;
       }
+      if (dto.affectsCash !== undefined) {
+        transaction.affectsCash = dto.affectsCash;
+      }
 
       await this.applyBalanceEffect(manager, userId, transaction);
+      await this.applyCashEffect(manager, userId, transaction);
       await repo.save(transaction);
     });
 
@@ -359,6 +419,29 @@ export class TransactionsService {
 
     await this.ledger.applyDelta(manager, contact, delta);
     transaction.balanceAppliedAmount = delta;
+  }
+
+  /**
+   * Money in on an income, money out on an expense — but only when the user
+   * marked the operation as a till operation. 'other' never moves cash.
+   */
+  private async applyCashEffect(
+    manager: EntityManager,
+    userId: string,
+    transaction: Transaction,
+  ): Promise<void> {
+    transaction.cashAppliedAmount = null;
+    if (!transaction.affectsCash) return;
+    if (transaction.type === TransactionType.OTHER) return;
+
+    const settings = await manager.getRepository(Settings).findOneByOrFail({ userId });
+    const primaryAmount = this.ledger.toPrimary(
+      transaction.amount,
+      transaction.currency,
+      settings,
+    );
+    transaction.cashAppliedAmount =
+      transaction.type === TransactionType.INCOME ? primaryAmount : -primaryAmount;
   }
 
   private async reverseBalanceEffect(

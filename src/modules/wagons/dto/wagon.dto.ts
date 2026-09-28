@@ -12,7 +12,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { Currency, WagonStatus } from '../../../common/enums';
+import { CustomsPayer, Currency, WagonStatus } from '../../../common/enums';
 
 export class CreateWagonDto {
   @ApiProperty({ example: 'Vaqon No. 676', maxLength: 100 })
@@ -101,6 +101,45 @@ export class CreateWagonDto {
   @IsBoolean()
   applySellToBalance?: boolean;
 
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'true when the purchase was paid out of the till (Kassa)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  buyThroughCash?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'true when the sale proceeds were taken into the till (Kassa)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sellThroughCash?: boolean;
+
+  // ── Customs ──────────────────────────────────────────────────
+  @ApiPropertyOptional({
+    example: 500,
+    minimum: 0,
+    description: 'Gömrük xərci; 0 or omitted means none',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  customsExpense?: number;
+
+  @ApiPropertyOptional({
+    enum: CustomsPayer,
+    description:
+      "Who carries the customs cost. Required once customsExpense is above 0; " +
+      "'buyer' bills the sold-to contact, 'seller' the bought-from contact",
+  })
+  @IsOptional()
+  @IsEnum(CustomsPayer)
+  customsPayer?: CustomsPayer;
+
   @ApiPropertyOptional({ example: '5 m³ yolda itki, sənədlə təsdiqlənib' })
   @IsOptional()
   @IsString()
@@ -188,6 +227,30 @@ export class UpdateWagonDto {
   @IsOptional()
   @IsBoolean()
   applySellToBalance?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  buyThroughCash?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  sellThroughCash?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: 'null or 0 clears the customs cost' })
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  customsExpense?: number | null;
+
+  @ApiPropertyOptional({ enum: CustomsPayer, nullable: true })
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsEnum(CustomsPayer)
+  customsPayer?: CustomsPayer | null;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

@@ -393,11 +393,11 @@ describe('Transactions (e2e)', () => {
     expect(settled.body.name).toBe('Reversible');
   });
 
-  it('reports the all-time till balance regardless of date', async () => {
+  it('leaves the till untouched by debt operations', async () => {
     const fresh = await registerUser(app);
     const contact = await createContact(app, fresh, 'Kassa');
 
-    // Three different months: the till spans all of them.
+    // Ordinary debt operations across three months: the pocket never moves.
     await authed(app, fresh)
       .post('/api/v1/transactions')
       .send({ type: 'income', amount: 5000, date: '2025-11-03', contactId: contact.id })
@@ -406,22 +406,127 @@ describe('Transactions (e2e)', () => {
       .post('/api/v1/transactions')
       .send({ type: 'expense', amount: 1200, date: '2026-01-19', contactId: contact.id })
       .expect(201);
-    const removable = await authed(app, fresh)
+
+    const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
+    expect(cash.body).toMatchObject({ income: 0, expense: 0, net: 0 });
+  });
+
+  it('moves the till only for operations marked as till operations', async () => {
+    const fresh = await registerUser(app);
+    const contact = await createContact(app, fresh, 'Kassa');
+
+    const taken = await authed(app, fresh)
       .post('/api/v1/transactions')
-      .send({ type: 'income', amount: 300, date: '2026-07-27', contactId: contact.id })
+      .send({
+        type: 'income',
+        amount: 5000,
+        date: '2026-09-28',
+        contactId: contact.id,
+        affectsCash: true,
+      })
+      .expect(201);
+    expect(taken.body.affectsCash).toBe(true);
+    expect(taken.body.cashAppliedAmount).toBe(5000);
+
+    await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({
+        type: 'expense',
+        amount: 1200,
+        date: '2026-09-28',
+        contactId: contact.id,
+        affectsCash: true,
+      })
       .expect(201);
 
     const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
-    expect(cash.body).toMatchObject({ income: 5300, expense: 1200, net: 4100 });
+    expect(cash.body).toMatchObject({ income: 5000, expense: 1200, net: 3800 });
 
-    // It moves with the transactions, not with the calendar.
-    await authed(app, fresh)
-      .delete(`/api/v1/transactions/${removable.body.id}`)
-      .expect(204);
-    const afterDelete = await authed(app, fresh)
-      .get('/api/v1/transactions/cash')
+    // Dropping one back out of the till leaves the transaction alone.
+    const dropped = await authed(app, fresh)
+      .patch(`/api/v1/transactions/${taken.body.id}/cash`)
+      .send({ affectsCash: false })
       .expect(200);
-    expect(afterDelete.body.net).toBe(3800);
+    expect(dropped.body.affectsCash).toBe(false);
+    expect(dropped.body.cashAppliedAmount).toBeNull();
+    expect(dropped.body.amount).toBe(5000);
+
+    const after = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
+    expect(after.body.net).toBe(-1200);
+
+    // And adding an old one in works the same way.
+    await authed(app, fresh)
+      .patch(`/api/v1/transactions/${taken.body.id}/cash`)
+      .send({ affectsCash: true })
+      .expect(200);
+    expect(
+      (await authed(app, fresh).get('/api/v1/transactions/cash')).body.net,
+    ).toBe(3800);
+  });
+
+  it('records a till-only entry with no contact and no debt', async () => {
+    const fresh = await registerUser(app);
+    const entry = await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({
+        type: 'expense',
+        amount: 75,
+        date: '2026-09-28',
+        description: 'Yanacaq',
+        affectsBalance: false,
+        affectsCash: true,
+      })
+      .expect(201);
+    expect(entry.body.contact).toBeNull();
+    expect(entry.body.balanceAppliedAmount).toBeNull();
+    expect(entry.body.cashAppliedAmount).toBe(-75);
+
+    expect((await authed(app, fresh).get('/api/v1/transactions/cash')).body.net).toBe(-75);
+    const summary = await authed(app, fresh).get('/api/v1/contacts/summary').expect(200);
+    expect(summary.body.count).toBe(0);
+  });
+
+  it('takes the till effect away with the transaction', async () => {
+    const fresh = await registerUser(app);
+    const entry = await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({
+        type: 'income',
+        amount: 900,
+        date: '2026-09-28',
+        affectsBalance: false,
+        affectsCash: true,
+      })
+      .expect(201);
+    expect((await authed(app, fresh).get('/api/v1/transactions/cash')).body.net).toBe(900);
+
+    await authed(app, fresh).delete(`/api/v1/transactions/${entry.body.id}`).expect(204);
+    expect((await authed(app, fresh).get('/api/v1/transactions/cash')).body.net).toBe(0);
+  });
+
+  it('lists till operations separately', async () => {
+    const fresh = await registerUser(app);
+    const contact = await createContact(app, fresh, 'Kassa');
+    await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({ type: 'income', amount: 10, date: '2026-09-28', contactId: contact.id })
+      .expect(201);
+    await authed(app, fresh)
+      .post('/api/v1/transactions')
+      .send({
+        type: 'income',
+        amount: 20,
+        date: '2026-09-28',
+        contactId: contact.id,
+        affectsCash: true,
+      })
+      .expect(201);
+
+    const inTill = await authed(app, fresh)
+      .get('/api/v1/transactions?affectsCash=true')
+      .expect(200);
+    expect(inTill.body.items).toHaveLength(1);
+    expect(inTill.body.items[0].amount).toBe(20);
   });
 
   it('starts the till at zero for a new user', async () => {
