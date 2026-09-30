@@ -47,6 +47,7 @@ export class WagonsService {
         sellPrice: dto.sellPrice ?? null,
         buyThroughCash: dto.buyThroughCash ?? false,
         sellThroughCash: dto.sellThroughCash ?? false,
+        location: dto.location ?? undefined,
         description: dto.description ?? null,
       });
 
@@ -138,6 +139,7 @@ export class WagonsService {
         const renamed = dto.name !== undefined && dto.name.trim() !== wagon.name;
         if (dto.name !== undefined) wagon.name = dto.name.trim();
         if (dto.status !== undefined) wagon.status = dto.status;
+        if (dto.location !== undefined) wagon.location = dto.location;
         if (dto.description !== undefined) wagon.description = dto.description;
         if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
         if (dto.sellThroughCash !== undefined) {
@@ -176,6 +178,7 @@ export class WagonsService {
       if (dto.name !== undefined) wagon.name = dto.name.trim();
       if (dto.currency !== undefined) wagon.currency = dto.currency;
       if (dto.status !== undefined) wagon.status = dto.status;
+      if (dto.location !== undefined) wagon.location = dto.location;
       if (dto.description !== undefined) wagon.description = dto.description;
       if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
       if (dto.sellThroughCash !== undefined) wagon.sellThroughCash = dto.sellThroughCash;

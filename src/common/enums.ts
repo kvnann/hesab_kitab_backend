@@ -22,6 +22,16 @@ export enum CustomsPayer {
   SELLER = 'seller',
 }
 
+/**
+ * Where the wagon is on its route. Ordered: goods start in Russia, clear
+ * through Azerbaijan and arrive in Iran.
+ */
+export enum WagonLocation {
+  RUSSIA = 'russia',
+  AZERBAIJAN = 'azerbaijan',
+  IRAN = 'iran',
+}
+
 export enum WagonStatus {
   OPEN = 'open',
   CLOSED = 'closed',

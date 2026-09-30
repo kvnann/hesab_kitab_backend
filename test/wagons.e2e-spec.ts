@@ -392,8 +392,8 @@ describe('Wagons (e2e)', () => {
     expect(await contactBalance(app, user, 'Namiq')).toBe(40000 + 500);
     expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
 
-    // Customs is carried by a counterparty, so it does not move "Fərq".
-    expect(wagon.body.difference).toBe(-1000);
+    // Customs is a cost of the deal, so the margin carries it: 40000 − 41000 − 500.
+    expect(wagon.body.difference).toBe(-1500);
 
     const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
     const namiq = contacts.body.find((c: { name: string }) => c.name === 'Namiq');
@@ -689,6 +689,81 @@ describe('Wagons (e2e)', () => {
 
     await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
     expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+  });
+
+  it('takes customs off the margin whoever pays it', async () => {
+    const user = await registerUser(app);
+    const body = {
+      buyVolume: 100,
+      buyPrice: 10,
+      boughtFrom: 'Etibar',
+      sellVolume: 100,
+      sellPrice: 15,
+      soldTo: 'Namiq',
+      customsExpense: 200,
+    };
+
+    const byBuyer = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ ...body, name: '710', customsPayer: 'buyer' })
+      .expect(201);
+    const bySeller = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ ...body, name: '711', customsPayer: 'seller' })
+      .expect(201);
+
+    // 1500 − 1000 − 200, regardless of who is billed.
+    expect(byBuyer.body.difference).toBe(300);
+    expect(bySeller.body.difference).toBe(300);
+
+    // Clearing customs gives the plain margin back.
+    const cleared = await authed(app, user)
+      .patch(`/api/v1/wagons/${byBuyer.body.id}`)
+      .send({ customsExpense: null })
+      .expect(200);
+    expect(cleared.body.difference).toBe(500);
+  });
+
+  it('starts in Russia and moves freely between any two points', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '720', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar' })
+      .expect(201);
+    expect(wagon.body.location).toBe('russia');
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+
+    // Straight to the destination, skipping the middle.
+    const moved = await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ location: 'iran' })
+      .expect(200);
+    expect(moved.body.location).toBe('iran');
+
+    // And back again — any point to any point.
+    const back = await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ location: 'azerbaijan' })
+      .expect(200);
+    expect(back.body.location).toBe('azerbaijan');
+
+    // Moving the wagon is bookkeeping only: no balance may shift.
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
+    expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${wagon.body.id}`)
+      .send({ location: 'nowhere' })
+      .expect(400);
+  });
+
+  it('accepts a starting location at creation', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({ name: '721', buyVolume: 1, buyPrice: 1, location: 'azerbaijan' })
+      .expect(201);
+    expect(wagon.body.location).toBe('azerbaijan');
   });
 
   it('rejects wagons with no side and half-filled sides', async () => {

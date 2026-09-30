@@ -12,7 +12,12 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { CustomsPayer, Currency, WagonStatus } from '../../../common/enums';
+import {
+  CustomsPayer,
+  Currency,
+  WagonLocation,
+  WagonStatus,
+} from '../../../common/enums';
 
 export class CreateWagonDto {
   @ApiProperty({ example: 'Vaqon No. 676', maxLength: 100 })
@@ -30,6 +35,15 @@ export class CreateWagonDto {
   @IsOptional()
   @IsEnum(WagonStatus)
   status?: WagonStatus;
+
+  @ApiPropertyOptional({
+    enum: WagonLocation,
+    default: WagonLocation.RUSSIA,
+    description: 'Where the goods are; wagons start in Russia',
+  })
+  @IsOptional()
+  @IsEnum(WagonLocation)
+  location?: WagonLocation;
 
   // ── Buy side ─────────────────────────────────────────────────
   @ApiPropertyOptional({ example: 205, description: 'Bought volume (m³)' })
@@ -170,6 +184,11 @@ export class UpdateWagonDto {
   @IsEnum(WagonStatus)
   status?: WagonStatus;
 
+  @ApiPropertyOptional({ enum: WagonLocation, description: 'Any point to any point' })
+  @IsOptional()
+  @IsEnum(WagonLocation)
+  location?: WagonLocation;
+
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)
@@ -265,4 +284,9 @@ export class ListWagonsDto {
   @IsOptional()
   @IsEnum(WagonStatus)
   status?: WagonStatus;
+
+  @ApiPropertyOptional({ enum: WagonLocation, description: 'Any point to any point' })
+  @IsOptional()
+  @IsEnum(WagonLocation)
+  location?: WagonLocation;
 }

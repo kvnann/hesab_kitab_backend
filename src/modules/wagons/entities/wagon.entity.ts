@@ -9,7 +9,12 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { CustomsPayer, Currency, WagonStatus } from '../../../common/enums';
+import {
+  CustomsPayer,
+  Currency,
+  WagonLocation,
+  WagonStatus,
+} from '../../../common/enums';
 import { decimalTransformer } from '../../../common/transformers/decimal.transformer';
 import { sub, total } from '../../../common/utils/decimal.util';
 import { Contact } from '../../contacts/entities/contact.entity';
@@ -41,6 +46,15 @@ export class Wagon {
     default: WagonStatus.OPEN,
   })
   status!: WagonStatus;
+
+  /** Where the goods are right now; unrelated to the archive flag above. */
+  @Column({
+    type: 'enum',
+    enum: WagonLocation,
+    enumName: 'wagon_location_enum',
+    default: WagonLocation.RUSSIA,
+  })
+  location!: WagonLocation;
 
   // ── Buy side ─────────────────────────────────────────────────
   @Column({
@@ -189,11 +203,16 @@ export class Wagon {
       : null;
   }
 
-  /** sellTotal − buyTotal ("Fərq" in the UI); null unless both sides exist. */
+  /**
+   * The deal's margin ("Fərq"): sellTotal − buyTotal − customs. Customs is a
+   * real cost of moving the goods, so it comes off the margin whichever
+   * counterparty is billed for it. Null unless both sides exist.
+   */
   @Expose()
   get difference(): number | null {
     const buy = this.buyTotal;
     const sell = this.sellTotal;
-    return buy !== null && sell !== null ? sub(sell, buy) : null;
+    if (buy === null || sell === null) return null;
+    return sub(sub(sell, buy), this.customsExpense ?? 0);
   }
 }
