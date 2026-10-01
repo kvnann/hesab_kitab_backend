@@ -38,6 +38,17 @@ export class KassaAsPocket1760000000000 implements MigrationInterface {
        WHERE "source" = 'wagon'`,
     );
 
+    // The first version of wagon rows stored type 'other'. The direction of
+    // the debt now lives in the type, so bring those rows in line: a purchase
+    // lowered the contact's balance, a sale or customs raised it.
+    await queryRunner.query(
+      `UPDATE "transactions"
+         SET "type" = CASE WHEN "wagon_side" = 'buy'
+                           THEN 'income'::"transaction_type_enum"
+                           ELSE 'expense'::"transaction_type_enum" END
+       WHERE "source" = 'wagon' AND "wagon_side" IS NOT NULL`,
+    );
+
     await queryRunner.query(
       `ALTER TABLE "wagons" ADD "buy_through_cash" boolean NOT NULL DEFAULT false`,
     );
