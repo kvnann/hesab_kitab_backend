@@ -11,9 +11,18 @@ export function money(value: number | string | Big): number {
   return Number(new Big(value).round(2).toString());
 }
 
-/** volume × price, rounded to money precision. */
+/**
+ * volume × price for a wagon side, floored to a whole unit.
+ *
+ * Volumes and prices keep their decimals, but the totals people settle on —
+ * and the debts and margin derived from them — are whole numbers, so a deal is
+ * never carrying a fraction of a cent. Volumes and prices are always positive
+ * here, so truncating toward zero is a floor.
+ */
 export function total(volume: number | string, price: number | string): number {
-  return money(new Big(volume).times(new Big(price)));
+  return Number(
+    new Big(volume).times(new Big(price)).round(0, Big.roundDown).toString(),
+  );
 }
 
 /** a + b at money precision. */

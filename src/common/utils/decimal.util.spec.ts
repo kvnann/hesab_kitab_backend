@@ -8,12 +8,15 @@ describe('decimal.util', () => {
     expect(money('41000')).toBe(41000);
   });
 
-  it('computes volume × price without float drift', () => {
+  it('computes volume × price without float drift, floored to a whole unit', () => {
     expect(total(205, 200)).toBe(41000);
-    expect(total(0.1, 0.2)).toBe(0.02);
+    // The decimals are multiplied in, then the result is floored — never the
+    // other way round, so 205.5 m³ is not quietly treated as 205.
+    expect(total(205.5, 199.99)).toBe(41097);
+    expect(total(1.5, 3)).toBe(4);
+    expect(total(0.9, 0.9)).toBe(0);
     // Classic float trap: 0.1 * 3 = 0.30000000000000004 in raw JS
-    expect(total(0.1, 3)).toBe(0.3);
-    expect(total(205.5, 199.99)).toBe(41097.95);
+    expect(total(0.1, 3)).toBe(0);
   });
 
   it('adds and subtracts exactly', () => {

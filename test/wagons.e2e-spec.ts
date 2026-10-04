@@ -766,6 +766,45 @@ describe('Wagons (e2e)', () => {
     expect(wagon.body.location).toBe('azerbaijan');
   });
 
+  it('keeps decimals on the inputs but floors the totals and the debts', async () => {
+    const user = await registerUser(app);
+    const wagon = await authed(app, user)
+      .post('/api/v1/wagons')
+      .send({
+        name: '730',
+        buyVolume: 205.5,
+        buyPrice: 199.99,
+        boughtFrom: 'Etibar',
+        sellVolume: 200.25,
+        sellPrice: 210.5,
+        soldTo: 'Namiq',
+      })
+      .expect(201);
+
+    // The volumes and prices are stored exactly as typed.
+    expect(wagon.body.buyVolume).toBe(205.5);
+    expect(wagon.body.buyPrice).toBe(199.99);
+    expect(wagon.body.sellVolume).toBe(200.25);
+    expect(wagon.body.sellPrice).toBe(210.5);
+
+    // 205.5 × 199.99 = 41097.9450 → 41097; 200.25 × 210.5 = 42152.625 → 42152.
+    expect(wagon.body.buyTotal).toBe(41097);
+    expect(wagon.body.sellTotal).toBe(42152);
+    expect(wagon.body.difference).toBe(1055);
+
+    // And the debts follow the floored totals, not the raw products.
+    expect(await contactBalance(app, user, 'Etibar')).toBe(-41097);
+    expect(await contactBalance(app, user, 'Namiq')).toBe(42152);
+
+    // The rows on each contact's page carry the same whole numbers.
+    const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
+    const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
+    const rows = await authed(app, user)
+      .get(`/api/v1/transactions?contactId=${etibar.id}`)
+      .expect(200);
+    expect(rows.body.items[0].amount).toBe(41097);
+  });
+
   it('rejects wagons with no side and half-filled sides', async () => {
     const user = await registerUser(app);
     await authed(app, user).post('/api/v1/wagons').send({ name: 'Empty' }).expect(400);
