@@ -34,7 +34,6 @@ describe('Wagons (e2e)', () => {
   it('creates a wagon with both sides, auto-creates contacts and applies balances', async () => {
     const user = await registerUser(app);
 
-    // Design example: buy 205 m³ × 200 $/m³ from Kənan, sell 200 m³ × 200 $/m³ to Namiq.
     const response = await authed(app, user)
       .post('/api/v1/wagons')
       .send({
@@ -56,9 +55,7 @@ describe('Wagons (e2e)', () => {
     expect(response.body.soldTo.name).toBe('Namiq');
     expect(response.body.status).toBe('open');
 
-    // We bought on credit from Kənan → we owe him 41000.
     expect(await contactBalance(app, user, 'Kənan')).toBe(-41000);
-    // Namiq bought from us on credit → he owes 40000.
     expect(await contactBalance(app, user, 'Namiq')).toBe(40000);
   });
 
@@ -91,7 +88,6 @@ describe('Wagons (e2e)', () => {
     expect(created.body.sellTotal).toBeNull();
     expect(await contactBalance(app, user, 'Kənan')).toBe(-40000);
 
-    // Later the deal is closed with a sale.
     const updated = await authed(app, user)
       .patch(`/api/v1/wagons/${created.body.id}`)
       .send({ sellVolume: 205, sellPrice: 200, soldTo: 'Namiq', status: 'closed' })
@@ -104,22 +100,18 @@ describe('Wagons (e2e)', () => {
 
   it('applies the balance when a contact is added to an existing side', async () => {
     const user = await registerUser(app);
-    // Created without "Kimdən alınıb" — nobody to bill yet.
     const wagon = await authed(app, user)
       .post('/api/v1/wagons')
       .send({ name: '676', buyVolume: 205, buyPrice: 200 })
       .expect(201);
     expect(wagon.body.boughtFrom).toBeNull();
 
-    // Editing the wagon to name the seller must move that seller's balance:
-    // the side was never a deliberate cash deal, it just had no contact.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ buyVolume: 205, buyPrice: 200, boughtFrom: 'Etibar' })
       .expect(200);
     expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
 
-    // Same on the sell side.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ sellVolume: 200, sellPrice: 200, soldTo: 'Namiq' })
@@ -142,7 +134,6 @@ describe('Wagons (e2e)', () => {
       .expect(201);
     expect(await contactBalance(app, user, 'Cash Seller')).toBe(0);
 
-    // An unrelated edit must not turn the cash deal into a debt.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ buyPrice: 12 })
@@ -185,7 +176,6 @@ describe('Wagons (e2e)', () => {
 
     await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
 
-    // The contacts survive; only the wagon's effect is undone.
     expect(await contactBalance(app, user, 'Etibar')).toBe(0);
     expect(await contactBalance(app, user, 'Namiq')).toBe(0);
   });
@@ -204,7 +194,6 @@ describe('Wagons (e2e)', () => {
       .expect(201);
     expect(await contactBalance(app, user, 'Etibar')).toBe(0);
 
-    // What the wagon form now sends on save: explicitly authoritative.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({
@@ -245,7 +234,6 @@ describe('Wagons (e2e)', () => {
       amount: 41000,
       source: 'wagon',
       affectsBalance: false,
-      // A wagon row's type carries the direction: the seller's balance fell.
       type: 'income',
     });
 
@@ -254,18 +242,15 @@ describe('Wagons (e2e)', () => {
       .expect(200);
     expect(sold.body.items[0].description).toBe('Mal satışı - 676');
 
-    // The wagon moved no cash, so the till and the month stay at zero.
     const cash = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
     expect(cash.body).toMatchObject({ income: 0, expense: 0, net: 0 });
 
-    // And the rows are hidden from the day report, which is a cash report.
     const today = new Date().toISOString().slice(0, 10);
     const day = await authed(app, user)
       .get(`/api/v1/transactions?date=${today}&source=manual`)
       .expect(200);
     expect(day.body.items).toHaveLength(0);
 
-    // They belong to the wagon and cannot be edited or deleted on their own.
     const rowId = bought.body.items[0].id;
     await authed(app, user)
       .patch(`/api/v1/transactions/${rowId}`)
@@ -273,7 +258,6 @@ describe('Wagons (e2e)', () => {
       .expect(400);
     await authed(app, user).delete(`/api/v1/transactions/${rowId}`).expect(400);
 
-    // Editing the wagon rewrites them rather than piling up duplicates.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ buyPrice: 210 })
@@ -284,7 +268,6 @@ describe('Wagons (e2e)', () => {
     expect(afterEdit.body.items).toHaveLength(1);
     expect(afterEdit.body.items[0].amount).toBe(43050);
 
-    // Renaming the wagon updates the text.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ name: '999' })
@@ -294,7 +277,6 @@ describe('Wagons (e2e)', () => {
       .expect(200);
     expect(renamed.body.items[0].description).toBe('Mal alışı - 999');
 
-    // Deleting the wagon takes its rows with it.
     await authed(app, user).delete(`/api/v1/wagons/${wagon.body.id}`).expect(204);
     const gone = await authed(app, user)
       .get(`/api/v1/transactions?contactId=${etibar.id}`)
@@ -334,8 +316,6 @@ describe('Wagons (e2e)', () => {
       .expect(201);
     expect(await contactBalance(app, user, 'Etibar')).toBe(-15129);
 
-    // Simulate a wagon created before this feature existed: the balance was
-    // applied, but no explanatory row was ever written.
     const dataSource = app.get(DataSource);
     await dataSource.query(
       `DELETE FROM transactions WHERE wagon_id = $1 AND source = 'wagon'`,
@@ -348,8 +328,6 @@ describe('Wagons (e2e)', () => {
         .items,
     ).toHaveLength(0);
 
-    // Re-saving the wagon from the app back-fills the row and leaves the
-    // balance exactly where it was — reversed and re-applied, not applied twice.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({
@@ -388,11 +366,9 @@ describe('Wagons (e2e)', () => {
     expect(wagon.body.customsExpense).toBe(500);
     expect(wagon.body.customsPayer).toBe('buyer');
 
-    // Buyer owes the sale plus the customs we laid out; the seller is untouched.
     expect(await contactBalance(app, user, 'Namiq')).toBe(40000 + 500);
     expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
 
-    // Customs is a cost of the deal, so the margin carries it: 40000 − 41000 − 500.
     expect(wagon.body.difference).toBe(-1500);
 
     const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
@@ -411,7 +387,6 @@ describe('Wagons (e2e)', () => {
       type: 'expense',
     });
 
-    // No cash moved.
     const cash = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
     expect(cash.body.net).toBe(0);
   });
@@ -430,7 +405,6 @@ describe('Wagons (e2e)', () => {
       })
       .expect(201);
 
-    // We owe 1000 for the wagon but laid out 250 on their behalf.
     expect(await contactBalance(app, user, 'Etibar')).toBe(-1000 + 250);
   });
 
@@ -455,7 +429,6 @@ describe('Wagons (e2e)', () => {
       .expect(200);
     expect(await contactBalance(app, user, 'Etibar')).toBe(-600);
 
-    // Moving the cost to the buyer takes it off the seller entirely.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ sellVolume: 100, sellPrice: 12, soldTo: 'Namiq', customsPayer: 'buyer' })
@@ -463,7 +436,6 @@ describe('Wagons (e2e)', () => {
     expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
     expect(await contactBalance(app, user, 'Namiq')).toBe(1200 + 400);
 
-    // Clearing it reverses the delta and removes the row.
     const cleared = await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ customsExpense: null })
@@ -505,13 +477,11 @@ describe('Wagons (e2e)', () => {
 
   it('refuses customs that nobody carries', async () => {
     const user = await registerUser(app);
-    // An amount with no payer.
     await authed(app, user)
       .post('/api/v1/wagons')
       .send({ name: '694', buyVolume: 100, buyPrice: 10, boughtFrom: 'Etibar', customsExpense: 100 })
       .expect(400);
 
-    // A payer whose side has no contact.
     await authed(app, user)
       .post('/api/v1/wagons')
       .send({
@@ -524,7 +494,6 @@ describe('Wagons (e2e)', () => {
       })
       .expect(400);
 
-    // Negative customs is not a thing.
     await authed(app, user)
       .post('/api/v1/wagons')
       .send({
@@ -564,17 +533,14 @@ describe('Wagons (e2e)', () => {
       })
       .expect(201);
 
-    // Nothing opted in yet.
     expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
 
-    // Paying for the goods out of the pocket takes money out of it.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ buyThroughCash: true })
       .expect(200);
     expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(-41000);
 
-    // Taking the sale into the pocket puts money in.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ sellThroughCash: true })
@@ -582,7 +548,6 @@ describe('Wagons (e2e)', () => {
     const both = await authed(app, user).get('/api/v1/transactions/cash').expect(200);
     expect(both.body).toMatchObject({ income: 40000, expense: 41000, net: -1000 });
 
-    // Balances are untouched by any of this.
     expect(await contactBalance(app, user, 'Etibar')).toBe(-41000);
     expect(await contactBalance(app, user, 'Namiq')).toBe(40000);
   });
@@ -624,8 +589,6 @@ describe('Wagons (e2e)', () => {
     const row = rows.body.items[0];
     expect(row.wagonSide).toBe('sell');
 
-    // Dropping the row from the till must also clear the wagon's own flag, or
-    // the next wagon save would silently put it back.
     await authed(app, user)
       .patch(`/api/v1/transactions/${row.id}/cash`)
       .send({ affectsCash: false })
@@ -712,11 +675,9 @@ describe('Wagons (e2e)', () => {
       .send({ ...body, name: '711', customsPayer: 'seller' })
       .expect(201);
 
-    // 1500 − 1000 − 200, regardless of who is billed.
     expect(byBuyer.body.difference).toBe(300);
     expect(bySeller.body.difference).toBe(300);
 
-    // Clearing customs gives the plain margin back.
     const cleared = await authed(app, user)
       .patch(`/api/v1/wagons/${byBuyer.body.id}`)
       .send({ customsExpense: null })
@@ -733,21 +694,18 @@ describe('Wagons (e2e)', () => {
     expect(wagon.body.location).toBe('russia');
     expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
 
-    // Straight to the destination, skipping the middle.
     const moved = await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ location: 'iran' })
       .expect(200);
     expect(moved.body.location).toBe('iran');
 
-    // And back again — any point to any point.
     const back = await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ location: 'azerbaijan' })
       .expect(200);
     expect(back.body.location).toBe('azerbaijan');
 
-    // Moving the wagon is bookkeeping only: no balance may shift.
     expect(await contactBalance(app, user, 'Etibar')).toBe(-1000);
     expect((await authed(app, user).get('/api/v1/transactions/cash')).body.net).toBe(0);
 
@@ -781,28 +739,81 @@ describe('Wagons (e2e)', () => {
       })
       .expect(201);
 
-    // The volumes and prices are stored exactly as typed.
     expect(wagon.body.buyVolume).toBe(205.5);
     expect(wagon.body.buyPrice).toBe(199.99);
     expect(wagon.body.sellVolume).toBe(200.25);
     expect(wagon.body.sellPrice).toBe(210.5);
 
-    // 205.5 × 199.99 = 41097.9450 → 41097; 200.25 × 210.5 = 42152.625 → 42152.
     expect(wagon.body.buyTotal).toBe(41097);
     expect(wagon.body.sellTotal).toBe(42152);
     expect(wagon.body.difference).toBe(1055);
 
-    // And the debts follow the floored totals, not the raw products.
     expect(await contactBalance(app, user, 'Etibar')).toBe(-41097);
     expect(await contactBalance(app, user, 'Namiq')).toBe(42152);
 
-    // The rows on each contact's page carry the same whole numbers.
     const contacts = await authed(app, user).get('/api/v1/contacts').expect(200);
     const etibar = contacts.body.find((c: { name: string }) => c.name === 'Etibar');
     const rows = await authed(app, user)
       .get(`/api/v1/transactions?contactId=${etibar.id}`)
       .expect(200);
     expect(rows.body.items[0].amount).toBe(41097);
+  });
+
+  it('lists open wagons oldest first and the archive newest archived first', async () => {
+    const user = await registerUser(app);
+    const ids: string[] = [];
+    for (const name of ['first', 'second', 'third']) {
+      const created = await authed(app, user)
+        .post('/api/v1/wagons')
+        .send({ name, buyVolume: 1, buyPrice: 1 })
+        .expect(201);
+      ids.push(created.body.id);
+    }
+
+    const open = await authed(app, user).get('/api/v1/wagons?status=open').expect(200);
+    expect(open.body.map((w: { name: string }) => w.name)).toEqual([
+      'first',
+      'second',
+      'third',
+    ]);
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${ids[2]}`)
+      .send({ status: 'closed' })
+      .expect(200);
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${ids[0]}`)
+      .send({ status: 'closed' })
+      .expect(200);
+
+    const archived = await authed(app, user)
+      .get('/api/v1/wagons?status=closed')
+      .expect(200);
+    expect(archived.body.map((w: { name: string }) => w.name)).toEqual([
+      'first',
+      'third',
+    ]);
+    expect(archived.body[0].archivedAt).not.toBeNull();
+
+    await authed(app, user)
+      .patch(`/api/v1/wagons/${ids[2]}`)
+      .send({ description: 'sonradan qeyd' })
+      .expect(200);
+    const after = await authed(app, user)
+      .get('/api/v1/wagons?status=closed')
+      .expect(200);
+    expect(after.body.map((w: { name: string }) => w.name)).toEqual(['first', 'third']);
+
+    const restored = await authed(app, user)
+      .patch(`/api/v1/wagons/${ids[0]}`)
+      .send({ status: 'open' })
+      .expect(200);
+    expect(restored.body.archivedAt).toBeNull();
+    const reopened = await authed(app, user).get('/api/v1/wagons?status=open').expect(200);
+    expect(reopened.body.map((w: { name: string }) => w.name)).toEqual([
+      'first',
+      'second',
+    ]);
   });
 
   it('rejects wagons with no side and half-filled sides', async () => {
@@ -866,7 +877,6 @@ describe('Wagons (e2e)', () => {
 
   it('converts manat wagons into the primary (dollar) balance using the rate', async () => {
     const user = await registerUser(app);
-    // Default settings: primary dollar, secondary manat, 1 USD = 1.70 AZN.
     await authed(app, user)
       .post('/api/v1/wagons')
       .send({
@@ -877,7 +887,6 @@ describe('Wagons (e2e)', () => {
         soldTo: 'AZN Buyer',
       })
       .expect(201);
-    // 1700 AZN / 1.7 = 1000 USD
     expect(await contactBalance(app, user, 'AZN Buyer')).toBe(1000);
   });
 
@@ -920,7 +929,6 @@ describe('Wagons (e2e)', () => {
     expect(await contactBalance(app, user, 'S')).toBe(-1000);
     expect(await contactBalance(app, user, 'B')).toBe(1100);
 
-    // Archive → status closed, balances untouched.
     const archived = await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ status: 'closed' })
@@ -929,7 +937,6 @@ describe('Wagons (e2e)', () => {
     expect(await contactBalance(app, user, 'S')).toBe(-1000);
     expect(await contactBalance(app, user, 'B')).toBe(1100);
 
-    // It leaves the active list and appears in the archive list.
     const open = await authed(app, user).get('/api/v1/wagons?status=open').expect(200);
     expect(open.body.some((w: { id: string }) => w.id === wagon.body.id)).toBe(false);
     const closed = await authed(app, user)
@@ -937,7 +944,6 @@ describe('Wagons (e2e)', () => {
       .expect(200);
     expect(closed.body.some((w: { id: string }) => w.id === wagon.body.id)).toBe(true);
 
-    // Restore.
     const restored = await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ status: 'open' })
@@ -949,7 +955,6 @@ describe('Wagons (e2e)', () => {
 
   it('archiving after an exchange-rate change does not shift balances', async () => {
     const user = await registerUser(app);
-    // Manat wagon at the default rate 1.70 → 1700 AZN = 1000 USD owed to us.
     const wagon = await authed(app, user)
       .post('/api/v1/wagons')
       .send({
@@ -962,21 +967,17 @@ describe('Wagons (e2e)', () => {
       .expect(201);
     expect(await contactBalance(app, user, 'Rate Buyer')).toBe(1000);
 
-    // The user later updates the manual rate.
     await authed(app, user)
       .patch('/api/v1/settings')
       .send({ exchangeRate: 2 })
       .expect(200);
 
-    // Archiving is metadata-only: the historical balance must stay at 1000,
-    // not be re-converted to 850 at the new rate.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ status: 'closed' })
       .expect(200);
     expect(await contactBalance(app, user, 'Rate Buyer')).toBe(1000);
 
-    // Renaming is metadata-only too.
     await authed(app, user)
       .patch(`/api/v1/wagons/${wagon.body.id}`)
       .send({ name: 'Renamed', description: 'note' })

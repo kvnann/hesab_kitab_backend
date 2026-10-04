@@ -28,14 +28,9 @@ export class Contact {
   @Column({ length: 100 })
   name!: string;
 
-  /** Encrypted at rest (AES-256-GCM). */
   @Column({ type: 'text', nullable: true, transformer: encryptedTransformer })
   phone!: string | null;
 
-  /**
-   * Signed balance in the user's primary currency.
-   * Positive: the contact owes us. Negative: we owe the contact.
-   */
   @Column({
     name: 'owes_us',
     type: 'numeric',

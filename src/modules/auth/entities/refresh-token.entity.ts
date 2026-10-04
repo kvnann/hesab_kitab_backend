@@ -22,7 +22,6 @@ export class RefreshToken {
   @JoinColumn({ name: 'user_id' })
   user!: User;
 
-  /** SHA-256 hex of the opaque refresh token — the raw token is never stored. */
   @Column({ name: 'token_hash', type: 'char', length: 64, unique: true })
   tokenHash!: string;
 

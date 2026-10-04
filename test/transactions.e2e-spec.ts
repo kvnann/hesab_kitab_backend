@@ -54,7 +54,6 @@ describe('Transactions (e2e)', () => {
     expect(tx.body.contact.name).toBe('Yeni Adam');
     expect(await getBalance(app, user, tx.body.contact.id)).toBe(300);
 
-    // Same name (case-insensitive) reuses the contact.
     await authed(app, user)
       .post('/api/v1/transactions')
       .send({ type: 'expense', amount: 200, date: '2026-07-28', contactName: 'yeni adam' })
@@ -112,14 +111,12 @@ describe('Transactions (e2e)', () => {
     expect(tx.body.affectsBalance).toBe(false);
     expect(await getBalance(app, user, contact.id)).toBe(1000);
 
-    // Editing keeps it list-only.
     await authed(app, user)
       .patch(`/api/v1/transactions/${tx.body.id}`)
       .send({ amount: 900 })
       .expect(200);
     expect(await getBalance(app, user, contact.id)).toBe(1000);
 
-    // Flipping the flag on applies the effect; still counted in summaries.
     await authed(app, user)
       .patch(`/api/v1/transactions/${tx.body.id}`)
       .send({ affectsBalance: true })
@@ -159,7 +156,6 @@ describe('Transactions (e2e)', () => {
       })
       .expect(201);
 
-    // 1700 AZN = 1000 USD at 1.70 → income settles debt → −1000.
     expect(await getBalance(app, user, contact.id)).toBe(-1000);
   });
 
@@ -173,21 +169,18 @@ describe('Transactions (e2e)', () => {
       .expect(201);
     expect(await getBalance(app, user, contact.id)).toBe(700);
 
-    // Change the amount → effect recomputed from scratch.
     await authed(app, user)
       .patch(`/api/v1/transactions/${tx.body.id}`)
       .send({ amount: 500 })
       .expect(200);
     expect(await getBalance(app, user, contact.id)).toBe(500);
 
-    // Flip to 'other' → effect fully reversed.
     await authed(app, user)
       .patch(`/api/v1/transactions/${tx.body.id}`)
       .send({ type: 'other' })
       .expect(200);
     expect(await getBalance(app, user, contact.id)).toBe(1000);
 
-    // Move it to a different contact as an expense.
     const second = await createContact(app, user, 'C2');
     await authed(app, user)
       .patch(`/api/v1/transactions/${tx.body.id}`)
@@ -225,13 +218,11 @@ describe('Transactions (e2e)', () => {
       .expect(201);
     expect(tx.body.wagon.name).toBe('Vaqon 676');
 
-    // Another user cannot reference a wagon they do not own.
     await authed(app, other)
       .post('/api/v1/transactions')
       .send({ type: 'other', amount: 10, date: '2026-07-03', wagonId: wagon.body.id })
       .expect(404);
 
-    // Nor a contact that is not theirs.
     const contact = await createContact(app, user, 'NotYours');
     await authed(app, other)
       .post('/api/v1/transactions')
@@ -283,9 +274,7 @@ describe('Transactions (e2e)', () => {
       { type: 'expense', amount: 10000, date: '2026-07-27' },
       { type: 'income', amount: 2000, date: '2026-07-26' },
       { type: 'expense', amount: 450, date: '2026-07-24' },
-      // Manat income: 1700 AZN = 1000 USD at the default 1.70 rate.
       { type: 'income', amount: 1700, currency: 'manat', date: '2026-07-24' },
-      // Outside the requested month — must be excluded.
       { type: 'income', amount: 99999, date: '2026-08-01' },
     ];
     for (const entry of entries) {
@@ -325,7 +314,6 @@ describe('Transactions (e2e)', () => {
     await authed(app, user).delete(`/api/v1/contacts/${contact.id}`).expect(204);
 
     await authed(app, user).get(`/api/v1/transactions/${tx.body.id}`).expect(404);
-    // Only that contact's history goes; everything else is untouched.
     await authed(app, user).get(`/api/v1/transactions/${unrelated.body.id}`).expect(200);
 
     const day = await authed(app, user)
@@ -348,7 +336,6 @@ describe('Transactions (e2e)', () => {
       .send({ type: 'income', amount: 500, date: '2026-07-11', contactId: original.id })
       .expect(201);
 
-    // Income settles the debt, so the first contact went 500 below zero.
     const before = await authed(app, user)
       .get(`/api/v1/contacts/${original.id}`)
       .expect(200);
@@ -360,7 +347,6 @@ describe('Transactions (e2e)', () => {
       .expect(200);
     expect(moved.body.contact.name).toBe('Brand New');
 
-    // The old contact is made whole and the new one carries the effect.
     const after = await authed(app, user)
       .get(`/api/v1/contacts/${original.id}`)
       .expect(200);
@@ -389,7 +375,6 @@ describe('Transactions (e2e)', () => {
       .get(`/api/v1/contacts/${contact.id}`)
       .expect(200);
     expect(settled.body.owesUs).toBe(0);
-    // The contact itself survives its transaction being removed.
     expect(settled.body.name).toBe('Reversible');
   });
 
@@ -397,7 +382,6 @@ describe('Transactions (e2e)', () => {
     const fresh = await registerUser(app);
     const contact = await createContact(app, fresh, 'Kassa');
 
-    // Ordinary debt operations across three months: the pocket never moves.
     await authed(app, fresh)
       .post('/api/v1/transactions')
       .send({ type: 'income', amount: 5000, date: '2025-11-03', contactId: contact.id })
@@ -442,7 +426,6 @@ describe('Transactions (e2e)', () => {
     const cash = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
     expect(cash.body).toMatchObject({ income: 5000, expense: 1200, net: 3800 });
 
-    // Dropping one back out of the till leaves the transaction alone.
     const dropped = await authed(app, fresh)
       .patch(`/api/v1/transactions/${taken.body.id}/cash`)
       .send({ affectsCash: false })
@@ -454,7 +437,6 @@ describe('Transactions (e2e)', () => {
     const after = await authed(app, fresh).get('/api/v1/transactions/cash').expect(200);
     expect(after.body.net).toBe(-1200);
 
-    // And adding an old one in works the same way.
     await authed(app, fresh)
       .patch(`/api/v1/transactions/${taken.body.id}/cash`)
       .send({ affectsCash: true })

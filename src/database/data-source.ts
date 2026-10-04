@@ -14,6 +14,7 @@ import { TransactionSource1758000000000 } from '../migrations/1758000000000-Tran
 import { WagonCustomsExpense1759000000000 } from '../migrations/1759000000000-WagonCustomsExpense';
 import { KassaAsPocket1760000000000 } from '../migrations/1760000000000-KassaAsPocket';
 import { WagonLocation1761000000000 } from '../migrations/1761000000000-WagonLocation';
+import { WagonArchivedAt1762000000000 } from '../migrations/1762000000000-WagonArchivedAt';
 
 loadEnv();
 
@@ -25,6 +26,7 @@ export const migrations = [
   WagonCustomsExpense1759000000000,
   KassaAsPocket1760000000000,
   WagonLocation1761000000000,
+  WagonArchivedAt1762000000000,
 ];
 
 export function buildDataSourceOptions(): PostgresConnectionOptions {
@@ -38,11 +40,9 @@ export function buildDataSourceOptions(): PostgresConnectionOptions {
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     entities,
     migrations,
-    // Never auto-sync a production schema — migrations are the only source of truth.
     synchronize: false,
     logging: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   };
 }
 
-/** CLI data source for `pnpm typeorm ...` commands. */
 export default new DataSource(buildDataSourceOptions());

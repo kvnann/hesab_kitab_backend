@@ -21,7 +21,6 @@ describe('ContactLedgerService.toPrimary', () => {
   });
 
   it('converts secondary-currency amounts using the manual rate', () => {
-    // 1700 AZN at 1 USD = 1.70 AZN → 1000 USD
     expect(service.toPrimary(1700, Currency.MANAT, makeSettings())).toBe(1000);
   });
 

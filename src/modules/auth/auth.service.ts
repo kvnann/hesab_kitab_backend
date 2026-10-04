@@ -18,7 +18,6 @@ import { RefreshToken } from './entities/refresh-token.entity';
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
-  /** Unix epoch seconds when the access token expires. */
   accessTokenExpiresAt: number;
 }
 
@@ -29,7 +28,7 @@ export interface AuthResult {
 
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
-  memoryCost: 19456, // 19 MiB — OWASP recommended baseline
+  memoryCost: 19456,
   timeCost: 2,
   parallelism: 1,
 };
@@ -81,7 +80,6 @@ export class AuthService {
       .where('user.username = :username', { username })
       .getOne();
 
-    // Verify against a dummy hash when the user is unknown to keep timing uniform.
     const hash =
       user?.passwordHash ??
       '$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -90,7 +88,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid username or password');
     }
 
-    // Opportunistic cleanup of dead tokens for this user.
     await this.refreshTokensRepository
       .createQueryBuilder()
       .delete()
@@ -102,10 +99,6 @@ export class AuthService {
     return { user, tokens };
   }
 
-  /**
-   * Rotate a refresh token: the presented token is revoked and a fresh one is
-   * issued with a full TTL window (sliding "30 days of non-use" expiry).
-   */
   async refresh(rawToken: string): Promise<AuthTokens> {
     const tokenHash = this.hashToken(rawToken);
     const stored = await this.refreshTokensRepository.findOne({

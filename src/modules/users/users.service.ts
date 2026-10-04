@@ -49,8 +49,6 @@ export class UsersService {
     await this.usersRepository.save(user);
   }
 
-  /** Deletes the user; contacts, wagons, transactions, settings and refresh
-   *  tokens are removed by ON DELETE CASCADE. */
   async remove(id: string): Promise<void> {
     const result = await this.usersRepository.delete({ id });
     if (!result.affected) throw new NotFoundException('User not found');

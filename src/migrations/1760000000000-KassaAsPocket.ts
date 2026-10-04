@@ -1,15 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Kassa becomes a money pocket that is only moved on purpose.
- *
- * Debt operations no longer touch it by default: a transaction reaches the till
- * only when it is marked as a till operation, and the signed amount it applied
- * is stored so the total is an exact sum rather than a re-derivation.
- *
- * Everything that already exists is deliberately left out — every account
- * starts from 0 and the user opts rows in one by one.
- */
 export class KassaAsPocket1760000000000 implements MigrationInterface {
   name = 'KassaAsPocket1760000000000';
 
@@ -21,8 +11,6 @@ export class KassaAsPocket1760000000000 implements MigrationInterface {
       `ALTER TABLE "transactions" ADD "cash_applied_amount" numeric(14,2)`,
     );
 
-    // Which wagon side a generated row belongs to. Replaces matching on the
-    // row's description text, and lets a till toggle find the owning side.
     await queryRunner.query(
       `CREATE TYPE "wagon_side_enum" AS ENUM ('buy', 'sell', 'customs')`,
     );
@@ -38,9 +26,6 @@ export class KassaAsPocket1760000000000 implements MigrationInterface {
        WHERE "source" = 'wagon'`,
     );
 
-    // The first version of wagon rows stored type 'other'. The direction of
-    // the debt now lives in the type, so bring those rows in line: a purchase
-    // lowered the contact's balance, a sale or customs raised it.
     await queryRunner.query(
       `UPDATE "transactions"
          SET "type" = CASE WHEN "wagon_side" = 'buy'

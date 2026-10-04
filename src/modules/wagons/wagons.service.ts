@@ -11,6 +11,7 @@ import {
   TransactionSource,
   TransactionType,
   WagonSide,
+  WagonStatus,
 } from '../../common/enums';
 import { total } from '../../common/utils/decimal.util';
 import { ContactLedgerService } from '../contacts/contact-ledger.service';
@@ -37,8 +38,6 @@ export class WagonsService {
       const wagon = repo.create({
         userId,
         name: dto.name.trim(),
-        // Resolved once here: every balance calculation below reads
-        // wagon.currency, and an undefined one would reach the converter.
         currency: dto.currency ?? Currency.DOLLAR,
         status: dto.status,
         buyVolume: dto.buyVolume ?? null,
@@ -48,6 +47,7 @@ export class WagonsService {
         buyThroughCash: dto.buyThroughCash ?? false,
         sellThroughCash: dto.sellThroughCash ?? false,
         location: dto.location ?? undefined,
+        archivedAt: dto.status === WagonStatus.CLOSED ? new Date() : null,
         description: dto.description ?? null,
       });
 
@@ -59,7 +59,6 @@ export class WagonsService {
         );
         wagon.boughtFromContactId = contact.id;
         if (dto.applyBuyToBalance !== false) {
-          // Buying on credit: we owe the seller → their owes_us decreases.
           const delta = -this.ledger.toPrimary(
             total(wagon.buyVolume as number, wagon.buyPrice as number),
             wagon.currency,
@@ -74,7 +73,6 @@ export class WagonsService {
         const contact = await this.ledger.findOrCreateByName(manager, userId, dto.soldTo);
         wagon.soldToContactId = contact.id;
         if (dto.applySellToBalance !== false) {
-          // Selling on credit: the buyer owes us → their owes_us increases.
           const delta = this.ledger.toPrimary(
             total(wagon.sellVolume as number, wagon.sellPrice as number),
             wagon.currency,
@@ -101,11 +99,24 @@ export class WagonsService {
   }
 
   async findAll(userId: string, filter: ListWagonsDto): Promise<Wagon[]> {
-    return this.wagonsRepository.find({
-      where: { userId, ...(filter.status ? { status: filter.status } : {}) },
-      relations: { boughtFrom: true, soldTo: true },
-      order: { createdAt: 'DESC' },
-    });
+    const qb = this.wagonsRepository
+      .createQueryBuilder('wagon')
+      .leftJoinAndSelect('wagon.boughtFrom', 'boughtFrom')
+      .leftJoinAndSelect('wagon.soldTo', 'soldTo')
+      .where('wagon.user_id = :userId', { userId });
+
+    if (filter.status) qb.andWhere('wagon.status = :status', { status: filter.status });
+
+    if (filter.status === WagonStatus.CLOSED) {
+      qb.orderBy('wagon.archived_at', 'DESC', 'NULLS LAST').addOrderBy(
+        'wagon.created_at',
+        'DESC',
+      );
+    } else {
+      qb.orderBy('wagon.created_at', 'ASC');
+    }
+
+    return qb.getMany();
   }
 
   async findOne(userId: string, id: string): Promise<Wagon> {
@@ -117,11 +128,6 @@ export class WagonsService {
     return wagon;
   }
 
-  /**
-   * Update strategy: reverse every previously applied balance effect, merge
-   * the changes, then re-apply. Simple to reason about and always consistent,
-   * at the cost of touching contact rows even for unrelated edits.
-   */
   async update(userId: string, id: string, dto: UpdateWagonDto): Promise<Wagon> {
     await this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(Wagon);
@@ -132,13 +138,10 @@ export class WagonsService {
         .getOne();
       if (!wagon) throw new NotFoundException('Wagon not found');
 
-      // Metadata-only edits (archive/restore, rename, description) must not run
-      // the reverse/re-apply cycle: re-applying converts with the *current*
-      // exchange rate, which would silently shift balances if the rate moved.
       if (!this.touchesBalance(dto)) {
         const renamed = dto.name !== undefined && dto.name.trim() !== wagon.name;
         if (dto.name !== undefined) wagon.name = dto.name.trim();
-        if (dto.status !== undefined) wagon.status = dto.status;
+        if (dto.status !== undefined) this.applyStatus(wagon, dto.status);
         if (dto.location !== undefined) wagon.location = dto.location;
         if (dto.description !== undefined) wagon.description = dto.description;
         if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
@@ -146,8 +149,6 @@ export class WagonsService {
           wagon.sellThroughCash = dto.sellThroughCash;
         }
         await repo.save(wagon);
-        // Rows carry the wagon name in their text and the till flag in their
-        // cash amount, so either change means rewriting them.
         if (
           renamed ||
           dto.buyThroughCash !== undefined ||
@@ -163,21 +164,16 @@ export class WagonsService {
       const settings = await this.getSettings(manager, userId);
       const hadBuySide = this.hasBuySide(wagon);
       const hadSellSide = this.hasSellSide(wagon);
-      // Captured before the merge below rewrites the contact columns. A side
-      // that had no contact was never "chosen" not to affect a balance — there
-      // was simply nobody to affect.
       const hadBuyContact = wagon.boughtFromContactId !== null;
       const hadSellContact = wagon.soldToContactId !== null;
 
-      // 1. Reverse prior effects (skip when the contact has been deleted).
       await this.reverseSide(manager, userId, wagon, 'buy');
       await this.reverseSide(manager, userId, wagon, 'sell');
       await this.reverseCustoms(manager, userId, wagon);
 
-      // 2. Merge scalar changes.
       if (dto.name !== undefined) wagon.name = dto.name.trim();
       if (dto.currency !== undefined) wagon.currency = dto.currency;
-      if (dto.status !== undefined) wagon.status = dto.status;
+      if (dto.status !== undefined) this.applyStatus(wagon, dto.status);
       if (dto.location !== undefined) wagon.location = dto.location;
       if (dto.description !== undefined) wagon.description = dto.description;
       if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
@@ -188,7 +184,6 @@ export class WagonsService {
       wagon.buyAppliedAmount = null;
       wagon.sellAppliedAmount = null;
 
-      // 3. Merge buy side.
       if (dto.buyVolume === null || dto.buyPrice === null) {
         wagon.buyVolume = null;
         wagon.buyPrice = null;
@@ -208,7 +203,6 @@ export class WagonsService {
         wagon.boughtFromContactId = contact.id;
       }
 
-      // 4. Merge sell side.
       if (dto.sellVolume === null || dto.sellPrice === null) {
         wagon.sellVolume = null;
         wagon.sellPrice = null;
@@ -231,7 +225,6 @@ export class WagonsService {
         wagon.sellPrice,
       );
 
-      // 4b. Merge customs. An explicit null (or 0) clears it along with its payer.
       if (dto.customsExpense !== undefined) {
         wagon.customsExpense = dto.customsExpense;
       }
@@ -244,10 +237,6 @@ export class WagonsService {
       }
       this.assertCustoms(wagon);
 
-      // 5. Re-apply balance effects on the merged state. Defaults: a side that
-      // already had a contact keeps its previous applied/not-applied choice
-      // (that is how a cash deal stays a cash deal); a side that is new, or
-      // that is only now getting a contact, applies automatically.
       const applyBuy =
         dto.applyBuyToBalance ?? (hadBuySide && hadBuyContact ? wasBuyApplied : true);
       if (this.hasBuySide(wagon) && wagon.boughtFromContactId && applyBuy) {
@@ -297,7 +286,6 @@ export class WagonsService {
     return this.findOne(userId, id);
   }
 
-  /** Delete the wagon, reversing any balance effects it applied. */
   async remove(userId: string, id: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(Wagon);
@@ -320,15 +308,6 @@ export class WagonsService {
     });
   }
 
-  /**
-   * Mirror one wagon side into a transaction on the contact's page, so the
-   * balance change has a visible reason ("Mal alışı - 676") instead of moving
-   * on its own. The row documents the wagon's effect; it never applies one of
-   * its own (affectsBalance is false) and never counts towards the till.
-   *
-   * Rewritten from scratch on every save: one row per side at most, gone as
-   * soon as the side loses its contact, its numbers, or its balance effect.
-   */
   private async syncSideTransaction(
     manager: EntityManager,
     userId: string,
@@ -350,16 +329,11 @@ export class WagonsService {
       await repo.delete(mine.map((row) => row.id));
     }
 
-    // Nothing to show when the side has no contact, no numbers, or was
-    // recorded as a cash deal that never touched a balance.
     if (!contactId || applied === null || applied === 0 || !amount) return;
 
     await repo.save(
       repo.create({
         userId,
-        // For a wagon row the type carries the direction of the debt movement:
-        // 'income' means the contact's balance fell, 'expense' that it rose.
-        // These rows never enter the cash totals — `source` keeps them out.
         type: applied < 0 ? TransactionType.INCOME : TransactionType.EXPENSE,
         amount,
         currency: wagon.currency,
@@ -372,19 +346,21 @@ export class WagonsService {
         source: TransactionSource.WAGON,
         wagonSide: spec.side,
         affectsCash: spec.throughCash(wagon),
-        // Paying for goods empties the till; selling them fills it. Customs is
-        // never a till operation.
         cashAppliedAmount: spec.throughCash(wagon) ? spec.cashSign * amount : null,
       }),
     );
   }
 
-  /** Same as {@link customsContactId}, reachable from the side descriptors. */
   customsContactForRow(wagon: Wagon): string | null {
     return this.customsContactId(wagon);
   }
 
-  /** The contact who carries customs: the buyer's side or the seller's side. */
+  private applyStatus(wagon: Wagon, status: WagonStatus): void {
+    if (status === wagon.status) return;
+    wagon.status = status;
+    wagon.archivedAt = status === WagonStatus.CLOSED ? new Date() : null;
+  }
+
   private customsContactId(wagon: Wagon): string | null {
     if (!wagon.customsPayer) return null;
     return wagon.customsPayer === CustomsPayer.BUYER
@@ -392,11 +368,6 @@ export class WagonsService {
       : wagon.boughtFromContactId;
   }
 
-  /**
-   * A customs cost needs somebody to carry it, and that somebody has to be a
-   * named contact on the matching side — otherwise the amount would be recorded
-   * against nobody and silently vanish from the ledger.
-   */
   private assertCustoms(wagon: Wagon): void {
     const amount = wagon.customsExpense ?? 0;
     if (amount <= 0) return;
@@ -415,11 +386,6 @@ export class WagonsService {
     }
   }
 
-  /**
-   * Customs is money we laid out, so whoever carries it owes us that much more
-   * (equivalently, we owe the seller that much less): a positive delta either
-   * way, just against a different contact.
-   */
   private async applyCustoms(
     manager: EntityManager,
     userId: string,
@@ -475,7 +441,6 @@ export class WagonsService {
     return settings;
   }
 
-  /** True when the update can change what was applied to a contact's balance. */
   private touchesBalance(dto: UpdateWagonDto): boolean {
     return (
       dto.buyVolume !== undefined ||
@@ -527,7 +492,6 @@ export class WagonsService {
   }
 }
 
-/** Local calendar date (YYYY-MM-DD), matching the transactions date column. */
 function toIsoDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -535,19 +499,15 @@ function toIsoDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-/** The three things on a wagon that can move a contact's balance. */
 type WagonLedgerSide = 'buy' | 'sell' | 'customs';
 
 interface LedgerSideSpec {
   side: WagonSide;
-  /** Text shown on the contact's page, before " - <wagon name>". */
   prefix: string;
   contactId: (service: WagonsService, wagon: Wagon) => string | null;
   applied: (wagon: Wagon) => number | null;
   amount: (wagon: Wagon) => number | null;
-  /** Whether this side was settled through the till. */
   throughCash: (wagon: Wagon) => boolean;
-  /** Direction on the till: −1 pays out, +1 takes in. */
   cashSign: -1 | 1;
 }
 

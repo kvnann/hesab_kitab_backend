@@ -21,7 +21,6 @@ export async function createTestApp(): Promise<INestApplication<App>> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
 
-  // Mirror the production bootstrap in main.ts.
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
   app.useGlobalPipes(
     new ValidationPipe({
@@ -42,7 +41,6 @@ export async function closeTestApp(app: INestApplication<App>): Promise<void> {
   await app.close();
 }
 
-/** Sign up a fresh user with a unique username; returns credentials and tokens. */
 export async function registerUser(app: INestApplication<App>): Promise<TestUser> {
   const username = `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`;
   const password = 'Test-password-123';

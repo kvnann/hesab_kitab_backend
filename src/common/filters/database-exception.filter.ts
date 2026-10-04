@@ -27,10 +27,6 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
   chk_contacts_name_not_blank: 'Contact name must not be blank',
 };
 
-/**
- * Maps Postgres constraint violations to meaningful HTTP errors instead of
- * leaking raw driver errors as 500s.
- */
 @Catch(QueryFailedError)
 export class DatabaseExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(DatabaseExceptionFilter.name);

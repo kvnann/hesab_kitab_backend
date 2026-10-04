@@ -63,8 +63,6 @@ describe('Contacts (e2e)', () => {
   });
 
   it('creates a contact with no balance from a name alone', async () => {
-    // What "Yeni əməliyyat" sends when the amount is 0: register the person,
-    // book nothing.
     const fresh = await registerUser(app);
     const created = await authed(app, fresh)
       .post('/api/v1/contacts')
@@ -75,7 +73,6 @@ describe('Contacts (e2e)', () => {
     const summary = await authed(app, fresh).get('/api/v1/contacts/summary').expect(200);
     expect(summary.body).toMatchObject({ receivable: 0, payable: 0, net: 0, count: 1 });
 
-    // No operation was recorded anywhere.
     const transactions = await authed(app, fresh)
       .get(`/api/v1/transactions?contactId=${created.body.id}`)
       .expect(200);
@@ -153,7 +150,6 @@ describe('Contacts (e2e)', () => {
 
     const kept = await authed(app, fresh).get(`/api/v1/wagons/${wagon.body.id}`).expect(200);
     expect(kept.body.boughtFrom).toBeNull();
-    // The numbers and the untouched sell side survive the unlink.
     expect(kept.body.buyTotal).toBe(41000);
     expect(kept.body.soldTo.name).toBe('Namiq');
   });
@@ -179,6 +175,17 @@ describe('Contacts (e2e)', () => {
     expect(cleared.body.description).toBeNull();
   });
 
+  it('lists contacts alphabetically, not by when they were added', async () => {
+    const fresh = await registerUser(app);
+    for (const name of ['Zaur', 'etibar', 'Namiq', 'Əli']) {
+      await authed(app, fresh).post('/api/v1/contacts').send({ name }).expect(201);
+    }
+    const listed = await authed(app, fresh).get('/api/v1/contacts').expect(200);
+    const names = listed.body.map((c: { name: string }) => c.name);
+    expect(names.indexOf('etibar')).toBeLessThan(names.indexOf('Namiq'));
+    expect(names.indexOf('Namiq')).toBeLessThan(names.indexOf('Zaur'));
+  });
+
   it("isolates users: one user cannot see another's contacts", async () => {
     const other = await registerUser(app);
     const created = await authed(app, user)
@@ -193,7 +200,6 @@ describe('Contacts (e2e)', () => {
       .expect(404);
     await authed(app, other).delete(`/api/v1/contacts/${created.body.id}`).expect(404);
 
-    // Same name is allowed for a different user.
     await authed(app, other)
       .post('/api/v1/contacts')
       .send({ name: 'Private Contact' })

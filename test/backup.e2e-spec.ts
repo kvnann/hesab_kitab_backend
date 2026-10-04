@@ -50,7 +50,6 @@ describe('Backup (e2e)', () => {
     expect(typeof backup.body.exportedAt).toBe('string');
     expect(backup.body.contacts).toHaveLength(1);
     expect(backup.body.wagons).toHaveLength(1);
-    // The manual transaction plus the row the wagon generated.
     expect(backup.body.transactions).toHaveLength(2);
     expect(backup.body.counts).toMatchObject({
       contacts: 1,
@@ -59,7 +58,6 @@ describe('Backup (e2e)', () => {
     });
     expect(backup.body.settings).toMatchObject({ primaryCurrency: 'dollar' });
 
-    // Phone numbers are encrypted at rest but must be readable in a backup.
     expect(backup.body.contacts[0].phone).toBe('+994 50 123 45 67');
   });
 

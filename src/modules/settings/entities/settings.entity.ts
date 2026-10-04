@@ -41,7 +41,6 @@ export class Settings {
   })
   secondaryCurrency!: SecondaryCurrency;
 
-  /** Manual rate: secondary units per 1 primary unit (e.g. 1 USD = 1.70 AZN). */
   @Column({
     name: 'exchange_rate',
     type: 'numeric',

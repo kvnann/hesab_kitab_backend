@@ -5,16 +5,8 @@ import { add, convert, money } from '../../common/utils/decimal.util';
 import { Settings } from '../settings/entities/settings.entity';
 import { Contact } from './entities/contact.entity';
 
-/**
- * All owes_us mutations go through this service, inside a caller-provided
- * database transaction, with the contact row locked (SELECT ... FOR UPDATE)
- * so concurrent wagon/transaction writes cannot lose updates.
- *
- * Sign convention: owes_us > 0 → the contact owes us; owes_us < 0 → we owe.
- */
 @Injectable()
 export class ContactLedgerService {
-  /** Lock and return a contact owned by the user, or null if absent. */
   async lockContact(
     manager: EntityManager,
     userId: string,
@@ -29,7 +21,6 @@ export class ContactLedgerService {
       .getOne();
   }
 
-  /** Find a contact by case-insensitive name (locked), creating it if missing. */
   async findOrCreateByName(
     manager: EntityManager,
     userId: string,
@@ -51,7 +42,6 @@ export class ContactLedgerService {
     return repo.save(repo.create({ userId, name: trimmed, owesUs: 0 }));
   }
 
-  /** Apply a signed delta to a locked contact's balance. */
   async applyDelta(
     manager: EntityManager,
     contact: Contact,
@@ -62,10 +52,6 @@ export class ContactLedgerService {
     await manager.getRepository(Contact).save(contact);
   }
 
-  /**
-   * Convert an amount into the user's primary currency using their manual
-   * exchange rate (secondary units per 1 primary unit).
-   */
   toPrimary(amount: number, currency: Currency, settings: Settings): number {
     if ((currency as string) === (settings.primaryCurrency as string)) {
       return money(amount);

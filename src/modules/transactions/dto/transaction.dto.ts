@@ -87,7 +87,6 @@ export class CreateTransactionDto {
   affectsCash?: boolean;
 }
 
-/** Explicit null on contactId/wagonId/description clears the field. */
 export class UpdateTransactionDto {
   @ApiPropertyOptional({ enum: TransactionType })
   @IsOptional()
@@ -156,7 +155,6 @@ export class UpdateTransactionDto {
   affectsCash?: boolean;
 }
 
-/** Body of PATCH /transactions/:id/cash. */
 export class SetAffectsCashDto {
   @ApiProperty({ description: 'true adds the operation to the till, false removes it' })
   @IsBoolean()

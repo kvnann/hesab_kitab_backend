@@ -1,5 +1,3 @@
-// Test environment defaults. Imported BEFORE any application module so the
-// values exist when ConfigModule validates them (ES module execution order).
 process.env.NODE_ENV = 'test';
 process.env.DB_HOST ??= 'localhost';
 process.env.DB_PORT ??= '5433';

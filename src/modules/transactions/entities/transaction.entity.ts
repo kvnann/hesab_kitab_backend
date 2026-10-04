@@ -48,7 +48,6 @@ export class Transaction {
   @Column({ type: 'enum', enum: Currency, enumName: 'currency_enum', default: Currency.DOLLAR })
   currency!: Currency;
 
-  /** Calendar date of the operation (no time component). */
   @Column({ type: 'date' })
   date!: string;
 
@@ -69,11 +68,6 @@ export class Transaction {
   @Column({ type: 'text', nullable: true })
   description!: string | null;
 
-  /**
-   * 'wagon' rows are generated and owned by a wagon side. They are visible on
-   * the contact's page, cannot be edited on their own, and never count towards
-   * the till or the day/month money totals.
-   */
   @Column({
     type: 'enum',
     enum: TransactionSource,
@@ -82,17 +76,9 @@ export class Transaction {
   })
   source!: TransactionSource;
 
-  /**
-   * When false ("Digər" operations), the transaction is list-only: it counts
-   * in income/expense summaries but never touches the contact's balance.
-   */
   @Column({ name: 'affects_balance', type: 'boolean', default: true })
   affectsBalance!: boolean;
 
-  /**
-   * Signed delta applied to the contact's owes_us when this transaction was
-   * recorded (primary currency). Stored for exact reversal on edit/delete.
-   */
   @Column({
     name: 'balance_applied_amount',
     type: 'numeric',
@@ -103,17 +89,9 @@ export class Transaction {
   })
   balanceAppliedAmount!: number | null;
 
-  /**
-   * Whether this operation moves the till ("Kassa"). Off by default: a debt
-   * operation only reaches the pocket when the user says it did.
-   */
   @Column({ name: 'affects_cash', type: 'boolean', default: false })
   affectsCash!: boolean;
 
-  /**
-   * Signed amount applied to the till (positive in, negative out). The Kassa
-   * total is the sum of this column, so it can never drift from the rows.
-   */
   @Column({
     name: 'cash_applied_amount',
     type: 'numeric',
@@ -124,7 +102,6 @@ export class Transaction {
   })
   cashAppliedAmount!: number | null;
 
-  /** For wagon-generated rows: which side of the wagon produced this row. */
   @Column({
     name: 'wagon_side',
     type: 'enum',

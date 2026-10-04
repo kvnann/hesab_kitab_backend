@@ -27,7 +27,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  /** Reject tokens whose user has been deleted since issuance. */
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
     const exists = await this.usersRepository.exists({ where: { id: payload.sub } });
     if (!exists) {

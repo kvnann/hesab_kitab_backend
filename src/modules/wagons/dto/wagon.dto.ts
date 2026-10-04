@@ -45,7 +45,6 @@ export class CreateWagonDto {
   @IsEnum(WagonLocation)
   location?: WagonLocation;
 
-  // ── Buy side ─────────────────────────────────────────────────
   @ApiPropertyOptional({ example: 205, description: 'Bought volume (m³)' })
   @IsOptional()
   @Type(() => Number)
@@ -80,7 +79,6 @@ export class CreateWagonDto {
   @IsBoolean()
   applyBuyToBalance?: boolean;
 
-  // ── Sell side ────────────────────────────────────────────────
   @ApiPropertyOptional({ example: 200, description: 'Sold volume (m³)' })
   @IsOptional()
   @Type(() => Number)
@@ -115,7 +113,6 @@ export class CreateWagonDto {
   @IsBoolean()
   applySellToBalance?: boolean;
 
-
   @ApiPropertyOptional({
     default: false,
     description: 'true when the purchase was paid out of the till (Kassa)',
@@ -132,7 +129,6 @@ export class CreateWagonDto {
   @IsBoolean()
   sellThroughCash?: boolean;
 
-  // ── Customs ──────────────────────────────────────────────────
   @ApiPropertyOptional({
     example: 500,
     minimum: 0,
@@ -161,11 +157,6 @@ export class CreateWagonDto {
   description?: string;
 }
 
-/**
- * All fields optional; explicit null clears:
- *  - buyVolume/buyPrice: null → removes the whole buy side (same for sell)
- *  - boughtFrom/soldTo: null → unlinks the contact (reversing any applied balance)
- */
 export class UpdateWagonDto {
   @ApiPropertyOptional({ maxLength: 100 })
   @IsOptional()

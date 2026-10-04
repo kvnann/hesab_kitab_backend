@@ -4,10 +4,6 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
-/**
- * Encrypt a UTF-8 string with AES-256-GCM.
- * Output format: base64(iv | authTag | ciphertext).
- */
 export function encryptString(plaintext: string, key: Buffer): string {
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
@@ -16,7 +12,6 @@ export function encryptString(plaintext: string, key: Buffer): string {
   return Buffer.concat([iv, tag, ciphertext]).toString('base64');
 }
 
-/** Decrypt a payload produced by {@link encryptString}. */
 export function decryptString(payload: string, key: Buffer): string {
   const raw = Buffer.from(payload, 'base64');
   const iv = raw.subarray(0, IV_LENGTH);

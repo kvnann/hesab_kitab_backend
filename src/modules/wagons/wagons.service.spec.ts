@@ -7,7 +7,6 @@ import { CreateWagonDto } from './dto/wagon.dto';
 import { Wagon } from './entities/wagon.entity';
 import { WagonsService } from './wagons.service';
 
-// Validation runs before any database access, so stubs are never touched.
 const service = new WagonsService(
   {} as DataSource,
   new ContactLedgerService(),
@@ -38,7 +37,6 @@ describe('WagonsService side validation', () => {
   });
 
   it('accepts a complete buy side without a sell side', () => {
-    // Passing validation means reaching the (stubbed) datasource and failing there.
     return expect(
       service.create('user-id', dto({ buyVolume: 205, buyPrice: 200 })),
     ).rejects.not.toThrow(BadRequestException);

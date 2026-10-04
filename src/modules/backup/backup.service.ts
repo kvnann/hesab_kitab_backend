@@ -6,12 +6,6 @@ import { Transaction } from '../transactions/entities/transaction.entity';
 import { User } from '../users/entities/user.entity';
 import { Wagon } from '../wagons/entities/wagon.entity';
 
-/**
- * Everything one user owns, in one JSON document. Relations are kept as plain
- * ids (contactId / wagonId) rather than nested objects so the file is a faithful
- * copy of the rows and could be read back later, with `contacts` available to
- * resolve those ids into names.
- */
 export interface BackupFile {
   format: 'hesab-kitab-backup';
   version: number;
@@ -32,11 +26,6 @@ export interface BackupFile {
 export class BackupService {
   constructor(private readonly dataSource: DataSource) {}
 
-  /**
-   * Credentials are deliberately absent: no password hash, no refresh tokens.
-   * Contact phone numbers are stored encrypted but come back decrypted here,
-   * because a backup nobody can read is not a backup.
-   */
   async export(userId: string): Promise<BackupFile> {
     const user = await this.dataSource.getRepository(User).findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');

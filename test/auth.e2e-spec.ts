@@ -75,13 +75,11 @@ describe('Auth (e2e)', () => {
       .expect(200);
     expect(first.body.refreshToken).not.toBe(user.refreshToken);
 
-    // The consumed token must be rejected.
     await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
       .send({ refreshToken: user.refreshToken })
       .expect(401);
 
-    // The rotated token still works.
     await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
       .send({ refreshToken: first.body.refreshToken })

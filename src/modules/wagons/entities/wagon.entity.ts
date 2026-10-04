@@ -47,7 +47,9 @@ export class Wagon {
   })
   status!: WagonStatus;
 
-  /** Where the goods are right now; unrelated to the archive flag above. */
+  @Column({ name: 'archived_at', type: 'timestamptz', nullable: true })
+  archivedAt!: Date | null;
+
   @Column({
     type: 'enum',
     enum: WagonLocation,
@@ -56,7 +58,6 @@ export class Wagon {
   })
   location!: WagonLocation;
 
-  // ── Buy side ─────────────────────────────────────────────────
   @Column({
     name: 'buy_volume',
     type: 'numeric',
@@ -85,11 +86,6 @@ export class Wagon {
   @JoinColumn({ name: 'bought_from_contact_id' })
   boughtFrom!: Contact | null;
 
-  /**
-   * Signed delta actually applied to the bought-from contact's owes_us when
-   * the buy side was recorded (in the user's primary currency). Stored so the
-   * effect can be reversed exactly on edit/delete.
-   */
   @Column({
     name: 'buy_applied_amount',
     type: 'numeric',
@@ -100,7 +96,6 @@ export class Wagon {
   })
   buyAppliedAmount!: number | null;
 
-  // ── Sell side ────────────────────────────────────────────────
   @Column({
     name: 'sell_volume',
     type: 'numeric',
@@ -139,16 +134,12 @@ export class Wagon {
   })
   sellAppliedAmount!: number | null;
 
-  /** Whether the purchase was paid out of the till. */
   @Column({ name: 'buy_through_cash', type: 'boolean', default: false })
   buyThroughCash!: boolean;
 
-  /** Whether the sale proceeds were taken into the till. */
   @Column({ name: 'sell_through_cash', type: 'boolean', default: false })
   sellThroughCash!: boolean;
 
-  // ── Customs ("Gömrük xərci") ─────────────────────────────────
-  /** Optional cost one of the counterparties carries; null or 0 means none. */
   @Column({
     name: 'customs_expense',
     type: 'numeric',
@@ -168,7 +159,6 @@ export class Wagon {
   })
   customsPayer!: CustomsPayer | null;
 
-  /** Signed delta applied to the payer's owes_us, for exact reversal. */
   @Column({
     name: 'customs_applied_amount',
     type: 'numeric',
@@ -188,7 +178,6 @@ export class Wagon {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
 
-  // ── Computed fields (serialized in API responses) ────────────
   @Expose()
   get buyTotal(): number | null {
     return this.buyVolume !== null && this.buyPrice !== null
@@ -203,11 +192,6 @@ export class Wagon {
       : null;
   }
 
-  /**
-   * The deal's margin ("Fərq"): sellTotal − buyTotal − customs. Customs is a
-   * real cost of moving the goods, so it comes off the margin whichever
-   * counterparty is billed for it. Null unless both sides exist.
-   */
   @Expose()
   get difference(): number | null {
     const buy = this.buyTotal;

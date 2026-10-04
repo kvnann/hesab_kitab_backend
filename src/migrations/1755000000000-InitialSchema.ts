@@ -61,7 +61,6 @@ export class InitialSchema1755000000000 implements MigrationInterface {
     await queryRunner.query(
       `CREATE INDEX "idx_contacts_user_id" ON "contacts" ("user_id")`,
     );
-    // Contact names are unique per user, case-insensitively.
     await queryRunner.query(
       `CREATE UNIQUE INDEX "uq_contacts_user_name" ON "contacts" ("user_id", lower("name"))`,
     );
@@ -123,7 +122,6 @@ export class InitialSchema1755000000000 implements MigrationInterface {
         CONSTRAINT "chk_transactions_amount_positive" CHECK ("amount" > 0)
       )
     `);
-    // B-tree index for fast date range and per-day lookups (calendar screens).
     await queryRunner.query(
       `CREATE INDEX "idx_transactions_user_date" ON "transactions" ("user_id", "date")`,
     );

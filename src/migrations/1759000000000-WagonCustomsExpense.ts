@@ -1,11 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Customs ("Gömrük xərci") is money laid out on a wagon that one of the two
- * counterparties carries. Optional; when set, the payer is recorded and the
- * applied delta is stored so it can be reversed exactly, like the buy and sell
- * sides already are.
- */
 export class WagonCustomsExpense1759000000000 implements MigrationInterface {
   name = 'WagonCustomsExpense1759000000000';
 
@@ -24,7 +18,6 @@ export class WagonCustomsExpense1759000000000 implements MigrationInterface {
       `ALTER TABLE "wagons" ADD CONSTRAINT "chk_wagons_customs_non_negative"
          CHECK ("customs_expense" IS NULL OR "customs_expense" >= 0)`,
     );
-    // An amount without a payer has nobody to bill.
     await queryRunner.query(
       `ALTER TABLE "wagons" ADD CONSTRAINT "chk_wagons_customs_payer"
          CHECK (COALESCE("customs_expense", 0) = 0 OR "customs_payer" IS NOT NULL)`,
