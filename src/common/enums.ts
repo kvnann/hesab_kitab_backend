@@ -15,11 +15,6 @@ export enum WagonSide {
   CUSTOMS = 'customs',
 }
 
-export enum CustomsPayer {
-  BUYER = 'buyer',
-  SELLER = 'seller',
-}
-
 export enum WagonLocation {
   RUSSIA = 'russia',
   AZERBAIJAN = 'azerbaijan',

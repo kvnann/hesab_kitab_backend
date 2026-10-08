@@ -15,6 +15,8 @@ import { WagonCustomsExpense1759000000000 } from '../migrations/1759000000000-Wa
 import { KassaAsPocket1760000000000 } from '../migrations/1760000000000-KassaAsPocket';
 import { WagonLocation1761000000000 } from '../migrations/1761000000000-WagonLocation';
 import { WagonArchivedAt1762000000000 } from '../migrations/1762000000000-WagonArchivedAt';
+import { WagonLocationDates1763000000000 } from '../migrations/1763000000000-WagonLocationDates';
+import { WagonCustomsCash1764000000000 } from '../migrations/1764000000000-WagonCustomsCash';
 
 loadEnv();
 
@@ -27,6 +29,8 @@ export const migrations = [
   KassaAsPocket1760000000000,
   WagonLocation1761000000000,
   WagonArchivedAt1762000000000,
+  WagonLocationDates1763000000000,
+  WagonCustomsCash1764000000000,
 ];
 
 export function buildDataSourceOptions(): PostgresConnectionOptions {

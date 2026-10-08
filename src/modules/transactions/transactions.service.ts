@@ -245,9 +245,9 @@ export class TransactionsService {
       if (!transaction) throw new NotFoundException('Transaction not found');
 
       if (transaction.source === TransactionSource.WAGON) {
-        if (transaction.wagonSide === WagonSide.CUSTOMS || !transaction.wagonId) {
+        if (!transaction.wagonId) {
           throw new BadRequestException(
-            'Gömrük xərci kassaya daxil edilmir — vaqon səhifəsindən dəyişin',
+            'Bu əməliyyat vaqona aiddir — onu vaqon səhifəsindən dəyişin',
           );
         }
         const wagons = manager.getRepository(Wagon);
@@ -255,7 +255,9 @@ export class TransactionsService {
         if (!wagon) throw new NotFoundException('Wagon not found');
 
         if (transaction.wagonSide === WagonSide.BUY) wagon.buyThroughCash = affectsCash;
-        else wagon.sellThroughCash = affectsCash;
+        else if (transaction.wagonSide === WagonSide.CUSTOMS) {
+          wagon.customsThroughCash = affectsCash;
+        } else wagon.sellThroughCash = affectsCash;
         await wagons.save(wagon);
 
         transaction.affectsCash = affectsCash;
@@ -275,9 +277,9 @@ export class TransactionsService {
   }
 
   private wagonCashDelta(transaction: Transaction): number {
-    return transaction.wagonSide === WagonSide.BUY
-      ? -transaction.amount
-      : transaction.amount;
+    return transaction.wagonSide === WagonSide.SELL
+      ? transaction.amount
+      : -transaction.amount;
   }
 
   async findOne(userId: string, id: string): Promise<Transaction> {

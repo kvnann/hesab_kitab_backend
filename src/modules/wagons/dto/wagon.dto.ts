@@ -12,12 +12,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import {
-  CustomsPayer,
-  Currency,
-  WagonLocation,
-  WagonStatus,
-} from '../../../common/enums';
+import { Currency, WagonLocation, WagonStatus } from '../../../common/enums';
 
 export class CreateWagonDto {
   @ApiProperty({ example: 'Vaqon No. 676', maxLength: 100 })
@@ -140,15 +135,14 @@ export class CreateWagonDto {
   @Min(0)
   customsExpense?: number;
 
+
   @ApiPropertyOptional({
-    enum: CustomsPayer,
-    description:
-      "Who carries the customs cost. Required once customsExpense is above 0; " +
-      "'buyer' bills the sold-to contact, 'seller' the bought-from contact",
+    default: true,
+    description: 'true pays the customs cost out of the till (Kassa)',
   })
   @IsOptional()
-  @IsEnum(CustomsPayer)
-  customsPayer?: CustomsPayer;
+  @IsBoolean()
+  customsThroughCash?: boolean;
 
   @ApiPropertyOptional({ example: '5 m³ yolda itki, sənədlə təsdiqlənib' })
   @IsOptional()
@@ -256,11 +250,13 @@ export class UpdateWagonDto {
   @Min(0)
   customsExpense?: number | null;
 
-  @ApiPropertyOptional({ enum: CustomsPayer, nullable: true })
+  @ApiPropertyOptional({
+    default: true,
+    description: 'true pays the customs cost out of the till (Kassa)',
+  })
   @IsOptional()
-  @ValidateIf((_o, value) => value !== null)
-  @IsEnum(CustomsPayer)
-  customsPayer?: CustomsPayer | null;
+  @IsBoolean()
+  customsThroughCash?: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

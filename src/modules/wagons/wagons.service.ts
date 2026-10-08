@@ -7,9 +7,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
   Currency,
-  CustomsPayer,
   TransactionSource,
   TransactionType,
+  WagonLocation,
   WagonSide,
   WagonStatus,
 } from '../../common/enums';
@@ -46,7 +46,9 @@ export class WagonsService {
         sellPrice: dto.sellPrice ?? null,
         buyThroughCash: dto.buyThroughCash ?? false,
         sellThroughCash: dto.sellThroughCash ?? false,
+        customsThroughCash: dto.customsThroughCash ?? true,
         location: dto.location ?? undefined,
+        locationDates: { [dto.location ?? WagonLocation.RUSSIA]: toIsoDate(new Date()) },
         archivedAt: dto.status === WagonStatus.CLOSED ? new Date() : null,
         description: dto.description ?? null,
       });
@@ -84,10 +86,6 @@ export class WagonsService {
       }
 
       wagon.customsExpense = dto.customsExpense ?? null;
-      wagon.customsPayer = dto.customsPayer ?? null;
-      this.assertCustoms(wagon);
-      await this.applyCustoms(manager, userId, wagon, settings);
-
       const saved = await repo.save(wagon);
       await this.syncSideTransaction(manager, userId, saved, 'buy');
       await this.syncSideTransaction(manager, userId, saved, 'sell');
@@ -142,17 +140,21 @@ export class WagonsService {
         const renamed = dto.name !== undefined && dto.name.trim() !== wagon.name;
         if (dto.name !== undefined) wagon.name = dto.name.trim();
         if (dto.status !== undefined) this.applyStatus(wagon, dto.status);
-        if (dto.location !== undefined) wagon.location = dto.location;
+        if (dto.location !== undefined) this.applyLocation(wagon, dto.location);
         if (dto.description !== undefined) wagon.description = dto.description;
         if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
         if (dto.sellThroughCash !== undefined) {
           wagon.sellThroughCash = dto.sellThroughCash;
         }
+        if (dto.customsThroughCash !== undefined) {
+          wagon.customsThroughCash = dto.customsThroughCash;
+        }
         await repo.save(wagon);
         if (
           renamed ||
           dto.buyThroughCash !== undefined ||
-          dto.sellThroughCash !== undefined
+          dto.sellThroughCash !== undefined ||
+          dto.customsThroughCash !== undefined
         ) {
           await this.syncSideTransaction(manager, userId, wagon, 'buy');
           await this.syncSideTransaction(manager, userId, wagon, 'sell');
@@ -169,12 +171,11 @@ export class WagonsService {
 
       await this.reverseSide(manager, userId, wagon, 'buy');
       await this.reverseSide(manager, userId, wagon, 'sell');
-      await this.reverseCustoms(manager, userId, wagon);
 
       if (dto.name !== undefined) wagon.name = dto.name.trim();
       if (dto.currency !== undefined) wagon.currency = dto.currency;
       if (dto.status !== undefined) this.applyStatus(wagon, dto.status);
-      if (dto.location !== undefined) wagon.location = dto.location;
+      if (dto.location !== undefined) this.applyLocation(wagon, dto.location);
       if (dto.description !== undefined) wagon.description = dto.description;
       if (dto.buyThroughCash !== undefined) wagon.buyThroughCash = dto.buyThroughCash;
       if (dto.sellThroughCash !== undefined) wagon.sellThroughCash = dto.sellThroughCash;
@@ -228,14 +229,10 @@ export class WagonsService {
       if (dto.customsExpense !== undefined) {
         wagon.customsExpense = dto.customsExpense;
       }
-      if (dto.customsPayer !== undefined) {
-        wagon.customsPayer = dto.customsPayer;
+      if (!wagon.customsExpense) wagon.customsExpense = null;
+      if (dto.customsThroughCash !== undefined) {
+        wagon.customsThroughCash = dto.customsThroughCash;
       }
-      if (!wagon.customsExpense) {
-        wagon.customsExpense = null;
-        wagon.customsPayer = null;
-      }
-      this.assertCustoms(wagon);
 
       const applyBuy =
         dto.applyBuyToBalance ?? (hadBuySide && hadBuyContact ? wasBuyApplied : true);
@@ -275,8 +272,6 @@ export class WagonsService {
         }
       }
 
-      await this.applyCustoms(manager, userId, wagon, settings);
-
       await repo.save(wagon);
       await this.syncSideTransaction(manager, userId, wagon, 'buy');
       await this.syncSideTransaction(manager, userId, wagon, 'sell');
@@ -298,7 +293,6 @@ export class WagonsService {
 
       await this.reverseSide(manager, userId, wagon, 'buy');
       await this.reverseSide(manager, userId, wagon, 'sell');
-      await this.reverseCustoms(manager, userId, wagon);
       await manager.getRepository(Transaction).delete({
         userId,
         wagonId: wagon.id,
@@ -316,8 +310,7 @@ export class WagonsService {
   ): Promise<void> {
     const repo = manager.getRepository(Transaction);
     const spec = LEDGER_SIDES[side];
-    const contactId = spec.contactId(this, wagon);
-    const applied = spec.applied(wagon);
+    const contactId = spec.contactId(wagon);
     const amount = spec.amount(wagon);
     const description = `${spec.prefix} - ${wagon.name}`;
 
@@ -329,12 +322,12 @@ export class WagonsService {
       await repo.delete(mine.map((row) => row.id));
     }
 
-    if (!contactId || applied === null || applied === 0 || !amount) return;
+    if (!spec.shouldExist(wagon) || !amount) return;
 
     await repo.save(
       repo.create({
         userId,
-        type: applied < 0 ? TransactionType.INCOME : TransactionType.EXPENSE,
+        type: spec.type,
         amount,
         currency: wagon.currency,
         date: toIsoDate(new Date()),
@@ -351,71 +344,19 @@ export class WagonsService {
     );
   }
 
-  customsContactForRow(wagon: Wagon): string | null {
-    return this.customsContactId(wagon);
+  private applyLocation(wagon: Wagon, location: WagonLocation): void {
+    if (location === wagon.location) return;
+    wagon.location = location;
+    wagon.locationDates = {
+      ...wagon.locationDates,
+      [location]: toIsoDate(new Date()),
+    };
   }
 
   private applyStatus(wagon: Wagon, status: WagonStatus): void {
     if (status === wagon.status) return;
     wagon.status = status;
     wagon.archivedAt = status === WagonStatus.CLOSED ? new Date() : null;
-  }
-
-  private customsContactId(wagon: Wagon): string | null {
-    if (!wagon.customsPayer) return null;
-    return wagon.customsPayer === CustomsPayer.BUYER
-      ? wagon.soldToContactId
-      : wagon.boughtFromContactId;
-  }
-
-  private assertCustoms(wagon: Wagon): void {
-    const amount = wagon.customsExpense ?? 0;
-    if (amount <= 0) return;
-
-    if (!wagon.customsPayer) {
-      throw new BadRequestException(
-        'Gömrük xərci üçün ödəyicini seçin: Alıcı və ya Satıcı',
-      );
-    }
-    if (!this.customsContactId(wagon)) {
-      throw new BadRequestException(
-        wagon.customsPayer === CustomsPayer.BUYER
-          ? 'Gömrüyü alıcı ödəyirsə, vaqonun "kimə satılıb" hissəsi doldurulmalıdır'
-          : 'Gömrüyü satıcı ödəyirsə, vaqonun "kimdən alınıb" hissəsi doldurulmalıdır',
-      );
-    }
-  }
-
-  private async applyCustoms(
-    manager: EntityManager,
-    userId: string,
-    wagon: Wagon,
-    settings: Settings,
-  ): Promise<void> {
-    wagon.customsAppliedAmount = null;
-    const amount = wagon.customsExpense ?? 0;
-    const contactId = this.customsContactId(wagon);
-    if (amount <= 0 || !contactId) return;
-
-    const contact = await this.ledger.lockContact(manager, userId, contactId);
-    if (!contact) return;
-
-    const delta = this.ledger.toPrimary(amount, wagon.currency, settings);
-    await this.ledger.applyDelta(manager, contact, delta);
-    wagon.customsAppliedAmount = delta;
-  }
-
-  private async reverseCustoms(
-    manager: EntityManager,
-    userId: string,
-    wagon: Wagon,
-  ): Promise<void> {
-    const applied = wagon.customsAppliedAmount;
-    const contactId = this.customsContactId(wagon);
-    if (applied === null || applied === 0 || !contactId) return;
-
-    const contact = await this.ledger.lockContact(manager, userId, contactId);
-    if (contact) await this.ledger.applyDelta(manager, contact, -applied);
   }
 
   private async reverseSide(
@@ -452,7 +393,7 @@ export class WagonsService {
       dto.soldTo !== undefined ||
       dto.applySellToBalance !== undefined ||
       dto.customsExpense !== undefined ||
-      dto.customsPayer !== undefined ||
+      dto.customsThroughCash !== undefined ||
       dto.currency !== undefined
     );
   }
@@ -504,39 +445,54 @@ type WagonLedgerSide = 'buy' | 'sell' | 'customs';
 interface LedgerSideSpec {
   side: WagonSide;
   prefix: string;
-  contactId: (service: WagonsService, wagon: Wagon) => string | null;
-  applied: (wagon: Wagon) => number | null;
+  contactId: (wagon: Wagon) => string | null;
   amount: (wagon: Wagon) => number | null;
+  type: TransactionType;
+  shouldExist: (wagon: Wagon) => boolean;
   throughCash: (wagon: Wagon) => boolean;
   cashSign: -1 | 1;
+}
+
+function sideHasBalance(
+  contactId: string | null,
+  applied: number | null,
+  amount: number | null,
+): boolean {
+  return Boolean(contactId) && applied !== null && applied !== 0 && Boolean(amount);
 }
 
 const LEDGER_SIDES: Record<WagonLedgerSide, LedgerSideSpec> = {
   buy: {
     side: WagonSide.BUY,
     prefix: 'Mal alışı',
-    contactId: (_service, wagon) => wagon.boughtFromContactId,
-    applied: (wagon) => wagon.buyAppliedAmount,
+    contactId: (wagon) => wagon.boughtFromContactId,
     amount: (wagon) => wagon.buyTotal,
+    type: TransactionType.INCOME,
+    shouldExist: (wagon) =>
+      sideHasBalance(wagon.boughtFromContactId, wagon.buyAppliedAmount, wagon.buyTotal),
     throughCash: (wagon) => wagon.buyThroughCash,
     cashSign: -1,
   },
   sell: {
     side: WagonSide.SELL,
     prefix: 'Mal satışı',
-    contactId: (_service, wagon) => wagon.soldToContactId,
-    applied: (wagon) => wagon.sellAppliedAmount,
+    contactId: (wagon) => wagon.soldToContactId,
     amount: (wagon) => wagon.sellTotal,
+    type: TransactionType.EXPENSE,
+    shouldExist: (wagon) =>
+      sideHasBalance(wagon.soldToContactId, wagon.sellAppliedAmount, wagon.sellTotal),
     throughCash: (wagon) => wagon.sellThroughCash,
     cashSign: 1,
   },
   customs: {
     side: WagonSide.CUSTOMS,
     prefix: 'Gömrük xərci',
-    contactId: (service, wagon) => service.customsContactForRow(wagon),
-    applied: (wagon) => wagon.customsAppliedAmount,
+    contactId: () => null,
     amount: (wagon) => wagon.customsExpense,
-    throughCash: () => false,
+    type: TransactionType.EXPENSE,
+    shouldExist: (wagon) =>
+      Boolean(wagon.customsExpense) && wagon.customsThroughCash,
+    throughCash: (wagon) => wagon.customsThroughCash,
     cashSign: -1,
   },
 };

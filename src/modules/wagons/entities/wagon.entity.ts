@@ -9,12 +9,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import {
-  CustomsPayer,
-  Currency,
-  WagonLocation,
-  WagonStatus,
-} from '../../../common/enums';
+import { Currency, WagonLocation, WagonStatus } from '../../../common/enums';
 import { decimalTransformer } from '../../../common/transformers/decimal.transformer';
 import { sub, total } from '../../../common/utils/decimal.util';
 import { Contact } from '../../contacts/entities/contact.entity';
@@ -57,6 +52,13 @@ export class Wagon {
     default: WagonLocation.RUSSIA,
   })
   location!: WagonLocation;
+
+  @Column({
+    name: 'location_dates',
+    type: 'jsonb',
+    default: () => "'{}'::jsonb",
+  })
+  locationDates!: Partial<Record<WagonLocation, string>>;
 
   @Column({
     name: 'buy_volume',
@@ -150,24 +152,8 @@ export class Wagon {
   })
   customsExpense!: number | null;
 
-  @Column({
-    name: 'customs_payer',
-    type: 'enum',
-    enum: CustomsPayer,
-    enumName: 'customs_payer_enum',
-    nullable: true,
-  })
-  customsPayer!: CustomsPayer | null;
-
-  @Column({
-    name: 'customs_applied_amount',
-    type: 'numeric',
-    precision: 14,
-    scale: 2,
-    nullable: true,
-    transformer: decimalTransformer,
-  })
-  customsAppliedAmount!: number | null;
+  @Column({ name: 'customs_through_cash', type: 'boolean', default: true })
+  customsThroughCash!: boolean;
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;
